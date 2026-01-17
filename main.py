@@ -1,12 +1,22 @@
 import logging
 
+import structlog
 from fastapi import FastAPI
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+structlog.configure(
+    cache_logger_on_first_use=True,
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.format_exc_info,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.dev.ConsoleRenderer(),
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
 )
-log = logging.getLogger(__name__)
+
+log = structlog.get_logger()
 
 app = FastAPI()
 
