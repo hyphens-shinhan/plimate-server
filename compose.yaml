@@ -1,9 +1,17 @@
 services:
+  adminer:
+    container_name: postgres_adminer
+    depends_on:
+      - postgres
+    image: adminer
+    ports:
+      - "8080:8080"
+
   fastapi:
     build:
       context: .
       dockerfile: Dockerfile
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     container_name: scholarship
     environment:
       - ENV=development
