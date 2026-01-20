@@ -3,6 +3,8 @@ import logging
 import structlog
 from fastapi import FastAPI
 
+from app.api.v1 import router as api_v1_router
+
 structlog.configure(
     cache_logger_on_first_use=True,
     wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
@@ -19,6 +21,8 @@ structlog.configure(
 log = structlog.get_logger()
 
 app = FastAPI()
+
+app.include_router(api_v1_router)
 
 
 @app.get("/")
