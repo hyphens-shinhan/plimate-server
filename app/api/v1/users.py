@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 
-from app.core import supabase_client
+from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
 from app.schemas.user import (
     UserResponse,
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_profile(user: AuthenticatedUser):
     result = (
-        supabase_client.table("users")
+        supabase.table("users")
         .select("*, user_profiles(*)")
         .eq("id", str(user.id))
         .single()
@@ -24,6 +24,13 @@ async def get_current_user_profile(user: AuthenticatedUser):
 
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    data = result.data
+    profile_data = data.pop("user_profiles", None)
+
+    return UserResponse(
+        **data, profile=UserProfileBase(**profile_data) if profile_data else None
+    )
 
 
 @router.patch("/me", response_model=UserResponse)
@@ -34,10 +41,7 @@ async def update_current_user(updates: UserUpdate, user: AuthenticatedUser):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
     result = (
-        supabase_client.table("users")
-        .update(update_data)
-        .eq("id", str(user.id))
-        .execute()
+        supabase.table("users").update(update_data).eq("id", str(user.id)).execute()
     )
 
     if not result.data:
@@ -47,9 +51,9 @@ async def update_current_user(updates: UserUpdate, user: AuthenticatedUser):
 
 
 @router.get("/me/profile", response_model=UserProfileBase)
-async def get_current_user_profile(user: AuthenticatedUser):
+async def get_current_user_extended_profile(user: AuthenticatedUser):
     result = (
-        supabase_client.table("user_profiles")
+        supabase.table("user_profiles")
         .select("*")
         .eq("user_id", str(user.id))
         .single()
@@ -57,9 +61,9 @@ async def get_current_user_profile(user: AuthenticatedUser):
     )
 
     if not result.data:
-        return UserProfileBase()
+        return UserProfileBase(user_id=user.id)
 
-    return UserProfileBase(**result.data)
+    return UserProfileBase(**result.data[0])
 
 
 @router.patch("/me/profile", response_model=UserProfileBase)
@@ -71,22 +75,13 @@ async def update_current_user_profile(
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
-    existing = (
-        supabase_client.table("user_profiles")
-        .select("user_id")
-        .eq("user_id", str(user.id))
-        .execute()
-    )
+    update_data["user_id"] = str(user.id)
 
-    if existing.data:
-        result = (
-            supabase_client.table("user_profiles")
-            .update(update_data)
-            .eq("user_id", str(user.id))
-            .execute()
+    try:
+        result = supabase.table("user_profiles").upsert(update_data).execute()
+
+        return UserProfileBase(**result.data[0])
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
-    else:
-        update_data["user_id"] = str(user.id)
-        result = supabase_client.table("user_profiles").insert(update_data).execute()
-
-    return UserProfileBase(**result.data[0]) if result.data else UserProfileBase()
