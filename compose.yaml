@@ -1,12 +1,4 @@
 services:
-  adminer:
-    container_name: postgres_adminer
-    depends_on:
-      - postgres
-    image: adminer
-    ports:
-      - "8080:8080"
-
   fastapi:
     build:
       context: .
@@ -15,26 +7,9 @@ services:
     container_name: scholarship
     environment:
       - ENV=development
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     volumes:
       - ./:/app
-
-  postgres:
-    image: postgres:18.1-alpine
-    environment:
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}", ]
-      interval: 30s
-      timeout: 30s
-      start_period: 0s
-      start_interval: 5s
-      retries: 3
-
-volumes:
-  postgres_data:

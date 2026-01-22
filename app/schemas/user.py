@@ -72,3 +72,13 @@ class UserProfileUpdate(BaseModel):
 
     interests: list[str] | None = None
     hobbies: list[str] | None = None
+
+
+class UserPublicProfile(BaseModel):
+    id: UUID
+    name: str
+    avatar_url: str | None = None
+    role: AppRole
+    university: str | None = None
+    major: str | None = None
+    scholarship_batch: int | None = None
