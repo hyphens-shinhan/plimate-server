@@ -4,9 +4,9 @@ from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
 from app.schemas.user import (
     UserHomeProfile,
+    UserFullProfile,
     UserProfileUpdate,
     UserPublicProfile,
-    UserFullProfile,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
