@@ -15,12 +15,29 @@ from app.schemas.follow import (
 router = APIRouter(prefix="/follows", tags=["follows"])
 
 
+def check_block_exists(user_id_1: str, user_id_2: str) -> bool:
+    result = (
+        supabase.table("blocks")
+        .select("blocker_id")
+        .or_(
+            f"and(blocker_id.eq.{user_id_1},blocked_id.eq.{user_id_2}),"
+            f"and(blocker_id.eq.{user_id_2},blocked_id.eq.{user_id_1})"
+        )
+        .execute()
+    )
+
+    return bool(result.data)
+
+
 @router.post("/{user_id}", status_code=status.HTTP_201_CREATED)
 async def send_follow_request(user_id: UUID, user: AuthenticatedUser):
     if str(user_id) == str(user.id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot follow yourself"
         )
+
+    if check_block_exists(str(user.id), str(user_id)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
     existing = (
         supabase.table("follows")
@@ -173,7 +190,7 @@ async def check_follow_status(user_id: UUID, user: AuthenticatedUser):
         .select("status")
         .or_(
             f"and(requester_id.eq.{user.id},receiver_id.eq.{user_id}),"
-            f"and(requester_id.eq.{user_id},receiver_id.eq.{user_id})"
+            f"and(requester_id.eq.{user_id},receiver_id.eq.{user.id})"
         )
         .execute()
     )
