@@ -17,7 +17,7 @@ async def get_current_user(user: AuthenticatedUser):
     result = (
         supabase.table("users")
         .select(
-            "id, name, avatar_url, role, user_profiles(school, major, scholarship_type, scholarship_batch"
+            "id, name, avatar_url, role, user_profiles(school, major, scholarship_type, scholarship_batch)"
         )
         .eq("id", str(user.id))
         .single()
@@ -35,10 +35,10 @@ async def get_current_user(user: AuthenticatedUser):
         name=data["name"],
         avatar_url=data["avatar_url"],
         role=data["role"],
-        school=profile["school"],
-        scholarship_type=profile["scholarship_type"],
-        scholarship_batch=profile["scholarship_batch"],
+        school=profile.get("school"),
         major=profile.get("major"),
+        scholarship_type=profile.get("scholarship_type"),
+        scholarship_batch=profile.get("scholarship_batch"),
     )
 
 
@@ -62,17 +62,18 @@ async def get_current_user_profile(user: AuthenticatedUser):
         id=data["id"],
         scholar_number=data["scholar_number"],
         name=data["name"],
+        email=data["email"],
         avatar_url=data["avatar_url"],
         role=data["role"],
-        school=profile["school"],
-        scholarship_type=profile["scholarship_type"],
-        scholarship_batch=profile["scholarship_batch"],
         birth_date=profile["birth_date"],
         is_location_public=profile["is_location_public"],
         is_scholarship_public=profile["is_scholarship_public"],
         is_contact_public=profile["is_contact_public"],
         is_follower_public=profile["is_follower_public"],
+        school=profile.get("school"),
         major=profile.get("major"),
+        scholarship_type=profile.get("scholarship_type"),
+        scholarship_batch=profile.get("scholarship_batch"),
         interests=profile.get("interests"),
         hobbies=profile.get("hobbies"),
         latitude=profile.get("latitude"),
@@ -125,12 +126,14 @@ async def get_user_public_profile(user_id: str, user: AuthenticatedUser):
         name=data["name"],
         avatar_url=data["avatar_url"],
         role=data["role"],
-        school=profile["school"],
         email=data["email"] if is_contact_public else None,
+        school=profile.get("school"),
         major=profile.get("major"),
-        scholarship_type=profile["scholarship_type"] if is_scholarship_public else None,
+        scholarship_type=(
+            profile.get("scholarship_type") if is_scholarship_public else None
+        ),
         scholarship_batch=(
-            profile["scholarship_batch"] if is_scholarship_public else None
+            profile.get("scholarship_batch") if is_scholarship_public else None
         ),
         interests=profile.get("interests"),
         hobbies=profile.get("hobbies"),

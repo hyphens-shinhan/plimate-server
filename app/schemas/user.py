@@ -26,11 +26,10 @@ class UserHomeProfile(BaseModel):
     avatar_url: str
     role: AppRole
 
-    school: str
-    scholarship_type: ScholarshipType
-    scholarship_batch: int
-
+    school: str | None = None
     major: str | None = None
+    scholarship_type: ScholarshipType | None = None
+    scholarship_batch: int | None = None
 
     class Config:
         from_attributes = True
@@ -42,10 +41,9 @@ class UserPublicProfile(BaseModel):
     avatar_url: str
     role: AppRole
 
-    school: str
-
     email: str | None = None
 
+    school: str | None = None
     major: str | None = None
     scholarship_type: str | None = None
     scholarship_batch: int | None = None
@@ -65,10 +63,6 @@ class UserFullProfile(BaseModel):
     avatar_url: str
     role: AppRole
 
-    school: str
-    scholarship_type: str
-    scholarship_batch: int
-
     birth_date: str
 
     is_location_public: bool
@@ -76,7 +70,10 @@ class UserFullProfile(BaseModel):
     is_scholarship_public: bool
     is_follower_public: bool
 
+    school: str | None = None
     major: str | None = None
+    scholarship_type: str | None = None
+    scholarship_batch: int | None = None
 
     interests: list[str] | None = None
     hobbies: list[str] | None = None
