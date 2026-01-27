@@ -45,7 +45,7 @@ class UserPublicProfile(BaseModel):
 
     school: str | None = None
     major: str | None = None
-    scholarship_type: str | None = None
+    scholarship_type: ScholarshipType | None = None
     scholarship_batch: int | None = None
 
     interests: list[str] | None = None
@@ -72,7 +72,7 @@ class UserFullProfile(BaseModel):
 
     school: str | None = None
     major: str | None = None
-    scholarship_type: str | None = None
+    scholarship_type: ScholarshipType | None = None
     scholarship_batch: int | None = None
 
     interests: list[str] | None = None
@@ -88,7 +88,7 @@ class UserFullProfile(BaseModel):
 class UserProfileUpdate(BaseModel):
     school: str | None = None
     major: str | None = None
-    scholarship_type: str | None = None
+    scholarship_type: ScholarshipType | None = None
     scholarship_batch: int | None = None
 
     birth_date: str | None = None
