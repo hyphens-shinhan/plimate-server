@@ -15,7 +15,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.get("/me", response_model=UserHomeProfile)
-async def get_my_home_profile(user: AuthenticatedUser):
+async def get_current_user_home_profile(user: AuthenticatedUser):
     try:
         result = (
             supabase.table("users")
@@ -47,7 +47,7 @@ async def get_my_home_profile(user: AuthenticatedUser):
 
 
 @router.get("/me/profile", response_model=UserMyProfile)
-async def get_my_profile(user: AuthenticatedUser):
+async def get_current_user_my_profile(user: AuthenticatedUser):
     try:
         result = (
             supabase.table("users_with_email")
@@ -83,7 +83,9 @@ async def get_my_profile(user: AuthenticatedUser):
 
 
 @router.patch("/me/profile", response_model=UserMyProfile)
-async def update_my_profile(updates: UserProfileUpdate, user: AuthenticatedUser):
+async def update_current_user_my_profile(
+    updates: UserProfileUpdate, user: AuthenticatedUser
+):
     update_data = updates.model_dump(exclude_unset=True)
 
     if not update_data:
@@ -128,7 +130,9 @@ async def get_current_user_privacy(user: AuthenticatedUser):
 
 
 @router.patch("/me/privacy")
-async def update_user_privacy(updates: UserPrivacyUpdate, user: AuthenticatedUser):
+async def update_current_user_privacy(
+    updates: UserPrivacyUpdate, user: AuthenticatedUser
+):
     update_data = updates.model_dump(exclude_unset=True)
 
     if not update_data:

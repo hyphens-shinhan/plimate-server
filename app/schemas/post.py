@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -14,74 +15,165 @@ class PostType(str, Enum):
 class EventStatus(str, Enum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
+    SCHEDULED = "SCHEDULED"
 
 
 class PostAuthor(BaseModel):
     id: UUID
     name: str
-    avatar_url: str
+    avatar_url: str | None = None
 
 
 class FeedPostCreate(BaseModel):
     content: str
+    is_anonymous: bool
+
     image_urls: list[str] | None = None
 
 
 class NoticePostCreate(BaseModel):
+    title: str
     content: str
+
+    is_pinned: bool
+
     file_urls: list[str] | None = None
     image_urls: list[str] | None = None
-    is_mandatory: bool
-    is_pinned: bool
 
 
 class EventPostCreate(BaseModel):
+    title: str
     content: str
-    event_date: datetime
+
+    event_start: datetime
+    event_end: datetime
     event_location: str
+    is_mandatory: bool
+
+    event_category: str | None = None
+    max_participants: int | None = None
+
     file_urls: list[str] | None = None
     image_urls: list[str] | None = None
-    is_mandatory: bool = False
 
 
-class PostUpdate(BaseModel):
+class FeedPostUpdate(BaseModel):
     content: str | None = None
+
+    image_urls: list[str] | None = None
+
+
+class NoticePostUpdate(BaseModel):
+    title: str | None = None
+    content: str | None = None
+
+    is_pinned: bool | None = None
+
     file_urls: list[str] | None = None
     image_urls: list[str] | None = None
-    event_data: datetime | None = None
+
+
+class EventPostUpdate(BaseModel):
+    title: str | None = None
+    content: str | None = None
+
+    event_start: datetime | None = None
+    event_end: datetime | None = None
     event_location: str | None = None
+    is_mandatory: bool | None = None
+
     event_status: EventStatus | None = None
-    is_mandatory: bool = False
-    is_pinned: bool = False
+    event_category: str | None = None
+    max_participants: int | None = None
+
+    file_urls: list[str] | None = None
+    image_urls: list[str] | None = None
 
 
-class PostResponse(BaseModel):
+class FeedPostResponse(BaseModel):
     id: UUID
-    author: PostAuthor
-    type: PostType
+    type: Literal[PostType.FEED] = PostType.FEED
+    created_at: datetime
 
-    content: str | None = None
-    file_urls: list[str] | None = None
+    content: str
+    is_anonymous: bool
+
+    like_count: int
+    scrap_count: int
+    comment_count: int
+    is_liked: bool
+    is_scrapped: bool
+
+    author: PostAuthor | None = None
+
     image_urls: list[str] | None = None
-
-    event_date: datetime | None = None
-    event_location: str | None = None
-    event_status: EventStatus | None = None
-
-    is_mandatory: bool = False
-    is_pinned: bool = False
-
-    like_count: int = 0
-    comment_count: int = 0
-
-    is_liked: bool = False
-
-    created_at: datetime | None = None
 
     class Config:
         from_attributes = True
 
 
-class PostListResponse(BaseModel):
-    posts: list[PostResponse]
+class NoticePostResponse(BaseModel):
+    id: UUID
+    type: Literal[PostType.NOTICE] = PostType.NOTICE
+    created_at: datetime
+
+    title: str
+    content: str
+    is_pinned: bool
+
+    view_count: int
+    like_count: int
+    is_liked: bool
+
+    author: PostAuthor
+
+    file_urls: list[str] | None = None
+    image_urls: list[str] | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class EventPostResponse(BaseModel):
+    id: UUID
+    type: Literal[PostType.EVENT] = PostType.EVENT
+    created_at: datetime
+
+    title: str
+    content: str
+    event_start: datetime
+    event_end: datetime
+    event_location: str
+    is_mandatory: bool
+    participants_count: int
+
+    like_count: int
+    comment_count: int
+    is_liked: bool
+
+    author: PostAuthor
+
+    event_status: EventStatus | None = None
+    event_category: str | None = None
+    max_participants: int | None = None
+
+    file_urls: list[str] | None = None
+    image_urls: list[str] | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class FeedPostListResponse(BaseModel):
+    posts: list[FeedPostResponse]
+    total: int
+
+
+class NoticePostListResponse(BaseModel):
+    posts: list[NoticePostResponse]
+    total: int
+
+
+class EventPostListResponse(BaseModel):
+    posts: list[EventPostResponse]
     total: int
