@@ -28,6 +28,7 @@ class CommentResponse(BaseModel):
 
     content: str
     is_anonymous: bool
+    is_deleted: bool
     created_at: datetime
 
     author: CommentAuthor | None = None

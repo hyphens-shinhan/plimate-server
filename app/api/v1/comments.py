@@ -17,17 +17,22 @@ router = APIRouter(prefix="/posts/{post_id}/comments", tags=["comments"])
 
 
 def _process_comment_row(row: dict) -> CommentResponse:
-    author_data = row.pop("users", {}) or {}
-    if row.get("is_anonymous"):
-        author_data = None
+    is_anonymous = row["is_anonymous"]
+    is_deleted = row["is_deleted"]
+
+    author = None
+    if not (is_anonymous or is_deleted):
+        if user_data := (row.get("users") or {}):
+            author = CommentAuthor(**user_data)
 
     return CommentResponse(
         id=row["id"],
         post_id=row["post_id"],
         content=row["content"],
-        is_anonymous=row.get("is_anonymous", False),
+        is_anonymous=is_anonymous,
+        is_deleted=is_deleted,
         created_at=row["created_at"],
-        author=CommentAuthor(**author_data) if author_data else None,
+        author=author,
         parent_id=row.get("parent_id"),
         replies=[],
     )
@@ -226,11 +231,25 @@ async def delete_comment(post_id: UUID, comment_id: UUID, user: AuthenticatedUse
         if existing.data["author_id"] != str(user.id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
-        supabase.table("post_comments").delete().eq("id", str(comment_id)).execute()
+        replies = (
+            supabase.table("post_comments")
+            .select("id")
+            .eq("parent_id", str(comment_id))
+            .limit(1)
+            .execute()
+        )
 
-        supabase.rpc("decrement_comment_count", {"post_id": str(post_id)}).execute()
+        if replies.data:
+            supabase.table("post_comments").update({"is_deleted": True}).eq(
+                "id", str(comment_id)
+            ).execute()
+            return {"message": "Comment soft deleted successfully"}
+        else:
+            supabase.table("post_comments").delete().eq("id", str(comment_id)).execute()
 
-        return {"message": "Comment deleted successfully"}
+            supabase.rpc("decrement_comment_count", {"post_id": str(post_id)}).execute()
+
+            return {"message": "Comment deleted successfully"}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
