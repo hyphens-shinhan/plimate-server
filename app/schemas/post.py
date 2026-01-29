@@ -21,7 +21,9 @@ class EventStatus(str, Enum):
 class PostAuthor(BaseModel):
     id: UUID
     name: str
+
     avatar_url: str | None = None
+    is_following: bool = False
 
 
 class FeedPostCreate(BaseModel):
@@ -125,8 +127,6 @@ class NoticePostResponse(BaseModel):
     like_count: int
     is_liked: bool
 
-    author: PostAuthor
-
     file_urls: list[str] | None = None
     image_urls: list[str] | None = None
 
@@ -150,8 +150,6 @@ class EventPostResponse(BaseModel):
     like_count: int
     comment_count: int
     is_liked: bool
-
-    author: PostAuthor
 
     event_status: EventStatus | None = None
     event_category: str | None = None

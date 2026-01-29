@@ -28,9 +28,18 @@ router = APIRouter(prefix="/posts", tags=["posts"])
 
 
 def _build_feed_response(
-    row: dict, author_data: dict, is_liked: bool, is_scrapped: bool
+    row: dict,
+    author_data: dict,
+    is_liked: bool,
+    is_scrapped: bool,
+    is_following: bool,
 ) -> FeedPostResponse:
     is_anonymous = row["is_anonymous"]
+
+    author = None
+    if not is_anonymous:
+        author = PostAuthor(**author_data)
+        author.is_following = is_following
 
     return FeedPostResponse(
         id=row["id"],
@@ -42,14 +51,12 @@ def _build_feed_response(
         comment_count=row.get("comment_count", 0),
         is_liked=is_liked,
         is_scrapped=is_scrapped,
-        author=(None if is_anonymous else PostAuthor(**author_data)),
+        author=author,
         image_urls=row.get("image_urls"),
     )
 
 
-def _build_notice_response(
-    row: dict, author_data: dict, is_liked: bool
-) -> NoticePostResponse:
+def _build_notice_response(row: dict, is_liked: bool) -> NoticePostResponse:
     return NoticePostResponse(
         id=row["id"],
         created_at=row["created_at"],
@@ -59,15 +66,12 @@ def _build_notice_response(
         view_count=row.get("view_count", 0),
         like_count=row.get("like_count", 0),
         is_liked=is_liked,
-        author=(PostAuthor(**author_data)),
         file_urls=row.get("file_urls"),
         image_urls=row.get("image_urls"),
     )
 
 
-def _build_event_response(
-    row: dict, author_data: dict, is_liked: bool
-) -> EventPostResponse:
+def _build_event_response(row: dict, is_liked: bool) -> EventPostResponse:
     return EventPostResponse(
         id=row["id"],
         created_at=row["created_at"],
@@ -81,12 +85,11 @@ def _build_event_response(
         like_count=row.get("like_count"),
         comment_count=row.get("comment_count"),
         is_liked=is_liked,
-        author=PostAuthor(**author_data),
         event_status=row["event_status"],
         event_category=row["event_category"],
         max_participants=row.get("max_participants"),
         file_urls=row.get("file_urls"),
-        image_urls=row.get("iamge_urls"),
+        image_urls=row.get("image_urls"),
     )
 
 
@@ -153,15 +156,50 @@ async def get_feed_posts(
             row["post_id"] for row in interactions.data if row["type"] == "SCRAP"
         }
 
+        author_ids = {
+            row["author_id"]
+            for row in result.data
+            if not row["is_anonymous"] and row["author_id"] and str(row["author_id"]) != str(user.id)
+        }
+
+        following_ids = set()
+        if author_ids:
+            follows_outgoing = (
+                supabase.table("follows")
+                .select("receiver_id")
+                .eq("requester_id", str(user.id))
+                .eq("status", "ACCEPTED")
+                .in_("receiver_id", list(author_ids))
+                .execute()
+            )
+
+            follows_incoming = (
+                supabase.table("follows")
+                .select("requester_id")
+                .eq("receiver_id", str(user.id))
+                .eq("status", "ACCEPTED")
+                .in_("requester_id", list(author_ids))
+                .execute()
+            )
+
+            following_ids = {row["receiver_id"] for row in follows_outgoing.data} | {
+                row["requester_id"] for row in follows_incoming.data
+            }
+
         posts = []
         for row in result.data:
             author_data = row.pop("users", {}) or {}
+            is_following = row["author_id"] in following_ids or row["author_id"] == str(
+                user.id
+            )
+
             posts.append(
                 _build_feed_response(
                     row,
                     author_data,
                     row["id"] in liked_post_ids,
                     row["id"] in scrapped_post_ids,
+                    is_following,
                 )
             )
 
@@ -215,6 +253,7 @@ async def get_feed_anonymous_posts(
                     author_data,
                     row["id"] in liked_post_ids,
                     row["id"] in scrapped_post_ids,
+                    True,
                 )
             )
 
@@ -257,7 +296,24 @@ async def get_feed_post(
         is_liked = any(i["type"] == "LIKE" for i in interactions.data)
         is_scrapped = any(i["type"] == "SCRAP" for i in interactions.data)
 
-        return _build_feed_response(row, author_data, is_liked, is_scrapped)
+        is_following = str(row["author_id"]) == str(user.id)
+        if not row["is_anonymous"] and not is_following:
+            check = (
+                supabase.table("follows")
+                .select("id")
+                .eq("status", "ACCEPTED")
+                .or_(
+                    f"and(requester_id.eq.{user.id},receiver_id.eq.{row['author_id']}),"
+                    f"and(requester_id.eq.{row['author_id']},receiver_id.eq.{user.id})"
+                )
+                .maybe_single()
+                .execute()
+            )
+            is_following = bool(check.data)
+
+        return _build_feed_response(
+            row, author_data, is_liked, is_scrapped, is_following
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -371,10 +427,7 @@ async def get_notice_posts(
 
         posts = []
         for row in result.data:
-            author_data = row.pop("users", {}) or {}
-            posts.append(
-                _build_notice_response(row, author_data, row["id"] in liked_post_ids)
-            )
+            posts.append(_build_notice_response(row, row["id"] in liked_post_ids))
 
         return NoticePostListResponse(posts=posts, total=result.count or len(posts))
     except Exception as e:
@@ -399,7 +452,6 @@ async def get_notice_post(post_id: UUID, user: AuthenticatedUser):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
         row = result.data
-        author_data = row.pop("users", {}) or {}
 
         supabase.table("posts").update({"view_count": row.get("view_count", 0) + 1}).eq(
             "id", str(post_id)
@@ -414,7 +466,7 @@ async def get_notice_post(post_id: UUID, user: AuthenticatedUser):
             .execute()
         )
 
-        return _build_notice_response(row, author_data, bool(liked_result.data))
+        return _build_notice_response(row, bool(liked_result.data))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -576,10 +628,7 @@ async def get_event_posts(
 
         posts = []
         for row in result.data:
-            author_data = row.pop("users", {}) or {}
-            posts.append(
-                _build_event_response(row, author_data, row["id"] in liked_post_ids)
-            )
+            posts.append(_build_event_response(row, row["id"] in liked_post_ids))
 
         return EventPostListResponse(posts=posts, total=result.count or len(posts))
     except Exception as e:
@@ -604,7 +653,6 @@ async def get_event_post(post_id: UUID, user: AuthenticatedUser):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
         row = result.data
-        author_data = row.pop("users", {}) or {}
 
         liked_result = (
             supabase.table("post_interactions")
@@ -615,7 +663,7 @@ async def get_event_post(post_id: UUID, user: AuthenticatedUser):
             .execute()
         )
 
-        return _build_event_response(row, author_data, bool(liked_result.data))
+        return _build_event_response(row, bool(liked_result.data))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
