@@ -181,6 +181,7 @@ async def update_club(club_id: UUID, club_update: ClubUpdate, user: Authenticate
             .single()
             .execute()
         )
+
         if not existing.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
