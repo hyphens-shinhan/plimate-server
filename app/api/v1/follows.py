@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, status, HTTPException, Query
+from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -81,7 +82,7 @@ async def get_pending_requests(
         supabase.table("follows")
         .select(
             "id, requester_id, created_at, users!follows_requester_id_fkey(id, name, avatar_url)",
-            count="exact",
+            count=CountMethod.exact,
         )
         .eq("receiver_id", str(user.id))
         .eq("status", "PENDING")
