@@ -34,3 +34,24 @@ class CouncilResponse(BaseModel):
 class CouncilListResponse(BaseModel):
     councils: list[CouncilResponse]
     total: int
+
+
+class MonthActivityStatus(BaseModel):
+    submitted: bool
+    report_id: UUID | None = None
+    title: str | None = None
+
+
+class CouncilActivity(BaseModel):
+    id: UUID
+    year: int
+    affiliation: str
+    region: str
+    leader_id: UUID | None
+    member_count: int
+    activity_status: dict[int, MonthActivityStatus]
+
+
+class CouncilActivityResponse(BaseModel):
+    year: int
+    councils: list[CouncilActivity]
