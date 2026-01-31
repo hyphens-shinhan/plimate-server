@@ -22,9 +22,7 @@ class CouncilResponse(BaseModel):
     year: int
     affiliation: str
     region: str
-
     member_count: int
-
     leader_id: UUID | None
 
     class Config:
@@ -34,6 +32,12 @@ class CouncilResponse(BaseModel):
 class CouncilListResponse(BaseModel):
     councils: list[CouncilResponse]
     total: int
+
+
+class CouncilMemberResponse(BaseModel):
+    id: UUID
+    name: str
+    avatar_url: str | None
 
 
 class MonthActivityStatus(BaseModel):
@@ -47,9 +51,9 @@ class CouncilActivity(BaseModel):
     year: int
     affiliation: str
     region: str
-    leader_id: UUID | None
     member_count: int
     activity_status: dict[int, MonthActivityStatus]
+    leader_id: UUID | None
 
 
 class CouncilActivityResponse(BaseModel):

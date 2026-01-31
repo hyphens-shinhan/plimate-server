@@ -102,7 +102,7 @@ async def update_current_user_my_profile(
             update_data["user_id"] = str(user.id)
             supabase.table("user_profiles").upsert(update_data).execute()
 
-        return await get_my_profile(user)
+        return await get_current_user_my_profile(user)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)

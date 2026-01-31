@@ -9,6 +9,7 @@ from app.schemas.council import (
     CouncilUpdate,
     CouncilResponse,
     CouncilListResponse,
+    CouncilMemberResponse,
     CouncilActivityResponse,
     CouncilActivity,
     MonthActivityStatus,
@@ -253,6 +254,53 @@ async def remove_council_member(
         ).execute()
 
         return {"message": "Member removed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.get(
+    "/{council_id}/members", response_model=list[CouncilMemberResponse]
+)
+async def get_council_members(council_id: UUID, user: AuthenticatedUser):
+    """
+    Get all members of a council.
+    Only council members can view the member list.
+    """
+    try:
+        # Verify user is a member of this council
+        membership = (
+            supabase.table("council_members")
+            .select("user_id")
+            .eq("council_id", str(council_id))
+            .eq("user_id", str(user.id))
+            .execute()
+        )
+
+        if not membership.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only council members can view the member list",
+            )
+
+        # Fetch all members with user info
+        result = (
+            supabase.table("council_members")
+            .select("user_id, users!inner(id, name, avatar_url)")
+            .eq("council_id", str(council_id))
+            .execute()
+        )
+
+        members = []
+        for row in result.data or []:
+            user_data = row.get("users")
+            if user_data:
+                members.append(CouncilMemberResponse(**user_data))
+
+        return members
     except HTTPException:
         raise
     except Exception as e:
