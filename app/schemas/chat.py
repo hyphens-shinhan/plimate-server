@@ -10,19 +10,9 @@ class ChatRoomType(str, Enum):
     GROUP = "GROUP"
 
 
-# ==========================================
-# REQUEST SCHEMAS
-# ==========================================
-
-
 class MessageCreate(BaseModel):
     message: str | None = None
     file_urls: list[str] | None = None
-
-
-# ==========================================
-# RESPONSE SCHEMAS
-# ==========================================
 
 
 class ChatRoomMember(BaseModel):

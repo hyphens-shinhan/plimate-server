@@ -47,6 +47,8 @@ class EventPostCreate(BaseModel):
     title: str
     content: str
 
+    application_start: datetime
+    application_end: datetime
     event_start: datetime
     event_end: datetime
     event_location: str
@@ -79,6 +81,8 @@ class EventPostUpdate(BaseModel):
     title: str | None = None
     content: str | None = None
 
+    application_start: datetime | None = None
+    application_end: datetime | None = None
     event_start: datetime | None = None
     event_end: datetime | None = None
     event_location: str | None = None
@@ -141,6 +145,8 @@ class EventPostResponse(BaseModel):
 
     title: str
     content: str
+    application_start: datetime | None
+    application_end: datetime | None
     event_start: datetime
     event_end: datetime
     event_location: str
@@ -150,6 +156,7 @@ class EventPostResponse(BaseModel):
     like_count: int
     comment_count: int
     is_liked: bool
+    is_applied: bool = False
 
     event_status: EventStatus | None = None
     event_category: str | None = None

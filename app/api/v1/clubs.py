@@ -12,6 +12,9 @@ from app.schemas.club import (
     UserClubProfile,
     ClubResponse,
     ClubListResponse,
+    GalleryImageCreate,
+    GalleryImageResponse,
+    GalleryListResponse,
 )
 
 router = APIRouter(prefix="/clubs", tags=["clubs"])
@@ -78,7 +81,7 @@ async def get_clubs(
         query = supabase.table("clubs").select("*", count=CountMethod.exact)
 
         if category:
-            query = query.contains("category", [category])
+            query = query.eq("category", category.value)
 
         result = (
             query.order("created_at", desc=True)
@@ -327,6 +330,122 @@ async def leave_club(club_id: UUID, user: AuthenticatedUser):
         ).execute()
 
         return {"message": "Successfully left the club"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.post(
+    "/{club_id}/gallery",
+    response_model=GalleryImageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_gallery_image(
+    club_id: UUID, image: GalleryImageCreate, user: AuthenticatedUser
+):
+    try:
+        club = (
+            supabase.table("clubs")
+            .select("creator_id")
+            .eq("id", str(club_id))
+            .single()
+            .execute()
+        )
+
+        if not club.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        if club.data["creator_id"] != str(user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the club creator can upload gallery images",
+            )
+
+        result = (
+            supabase.table("club_gallery")
+            .insert(
+                {
+                    "club_id": str(club_id),
+                    "image_url": image.image_url,
+                    "caption": image.caption,
+                    "uploaded_by": str(user.id),
+                }
+            )
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return GalleryImageResponse(**result.data[0])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.get("/{club_id}/gallery", response_model=GalleryListResponse)
+async def get_gallery_images(
+    club_id: UUID,
+    user: AuthenticatedUser,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    try:
+        result = (
+            supabase.table("club_gallery")
+            .select("*", count=CountMethod.exact)
+            .eq("club_id", str(club_id))
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+
+        images = [GalleryImageResponse(**row) for row in (result.data or [])]
+
+        return GalleryListResponse(images=images, total=result.count or len(images))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.delete("/{club_id}/gallery/{image_id}", status_code=status.HTTP_200_OK)
+async def delete_gallery_image(
+    club_id: UUID, image_id: UUID, user: AuthenticatedUser
+):
+    try:
+        club = (
+            supabase.table("clubs")
+            .select("creator_id")
+            .eq("id", str(club_id))
+            .single()
+            .execute()
+        )
+
+        if not club.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        if club.data["creator_id"] != str(user.id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+        result = (
+            supabase.table("club_gallery")
+            .delete()
+            .eq("id", str(image_id))
+            .eq("club_id", str(club_id))
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        return {"message": "Gallery image deleted"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)

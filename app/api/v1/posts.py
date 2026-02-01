@@ -71,20 +71,25 @@ def _build_notice_response(row: dict, is_liked: bool) -> NoticePostResponse:
     )
 
 
-def _build_event_response(row: dict, is_liked: bool) -> EventPostResponse:
+def _build_event_response(
+    row: dict, is_liked: bool, participants_count: int = 0, is_applied: bool = False
+) -> EventPostResponse:
     return EventPostResponse(
         id=row["id"],
         created_at=row["created_at"],
         title=row["title"],
         content=row["content"],
+        application_start=row.get("application_start"),
+        application_end=row.get("application_end"),
         event_start=row["event_start"],
         event_end=row["event_end"],
         event_location=row["event_location"],
         is_mandatory=row.get("is_mandatory", False),
-        participants_count=0,
+        participants_count=participants_count,
         like_count=row.get("like_count"),
         comment_count=row.get("comment_count"),
         is_liked=is_liked,
+        is_applied=is_applied,
         event_status=row["event_status"],
         event_category=row["event_category"],
         max_participants=row.get("max_participants"),
@@ -537,6 +542,8 @@ async def create_event_post(post: EventPostCreate, user: AuthenticatedUser):
                     "type": PostType.EVENT.value,
                     "title": post.title,
                     "content": post.content,
+                    "application_start": post.application_start.isoformat(),
+                    "application_end": post.application_end.isoformat(),
                     "event_start": post.event_start.isoformat(),
                     "event_end": post.event_end.isoformat(),
                     "event_location": post.event_location,
@@ -626,11 +633,107 @@ async def get_event_posts(
         )
         liked_post_ids = {row["post_id"] for row in liked_result.data}
 
+        event_ids = [row["id"] for row in result.data]
+        applied_result = (
+            supabase.table("event_participants")
+            .select("post_id")
+            .eq("user_id", str(user.id))
+            .in_("post_id", event_ids)
+            .execute()
+        ) if event_ids else type("R", (), {"data": []})()
+        applied_post_ids = {row["post_id"] for row in (applied_result.data or [])}
+
+        participant_counts_result = (
+            supabase.table("event_participants")
+            .select("post_id")
+            .in_("post_id", event_ids)
+            .execute()
+        ) if event_ids else type("R", (), {"data": []})()
+        participant_counts: dict[str, int] = {}
+        for row in (participant_counts_result.data or []):
+            participant_counts[row["post_id"]] = participant_counts.get(row["post_id"], 0) + 1
+
         posts = []
         for row in result.data:
-            posts.append(_build_event_response(row, row["id"] in liked_post_ids))
+            posts.append(
+                _build_event_response(
+                    row,
+                    row["id"] in liked_post_ids,
+                    participant_counts.get(row["id"], 0),
+                    row["id"] in applied_post_ids,
+                )
+            )
 
         return EventPostListResponse(posts=posts, total=result.count or len(posts))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.get("/event/me/applied", response_model=EventPostListResponse)
+async def get_my_applied_events(
+    user: AuthenticatedUser,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    try:
+        applications = (
+            supabase.table("event_participants")
+            .select("post_id", count=CountMethod.exact)
+            .eq("user_id", str(user.id))
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+
+        if not applications.data:
+            return EventPostListResponse(posts=[], total=0)
+
+        post_ids = [a["post_id"] for a in applications.data]
+
+        result = (
+            supabase.table("posts")
+            .select("*")
+            .in_("id", post_ids)
+            .eq("type", PostType.EVENT.value)
+            .execute()
+        )
+
+        liked_result = (
+            supabase.table("post_interactions")
+            .select("post_id")
+            .eq("user_id", str(user.id))
+            .eq("type", "LIKE")
+            .in_("post_id", post_ids)
+            .execute()
+        )
+        liked_post_ids = {row["post_id"] for row in liked_result.data}
+
+        participant_counts_result = (
+            supabase.table("event_participants")
+            .select("post_id")
+            .in_("post_id", post_ids)
+            .execute()
+        )
+        participant_counts: dict[str, int] = {}
+        for row in (participant_counts_result.data or []):
+            participant_counts[row["post_id"]] = participant_counts.get(row["post_id"], 0) + 1
+
+        post_map = {row["id"]: row for row in (result.data or [])}
+        posts = []
+        for pid in post_ids:
+            if pid in post_map:
+                posts.append(
+                    _build_event_response(
+                        post_map[pid],
+                        pid in liked_post_ids,
+                        participant_counts.get(pid, 0),
+                        is_applied=True,
+                    )
+                )
+
+        return EventPostListResponse(posts=posts, total=applications.count or len(posts))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -663,7 +766,21 @@ async def get_event_post(post_id: UUID, user: AuthenticatedUser):
             .execute()
         )
 
-        return _build_event_response(row, bool(liked_result.data))
+        participants = (
+            supabase.table("event_participants")
+            .select("user_id", count=CountMethod.exact)
+            .eq("post_id", str(post_id))
+            .execute()
+        )
+        participants_count = participants.count or 0
+
+        is_applied = any(
+            p["user_id"] == str(user.id) for p in (participants.data or [])
+        )
+
+        return _build_event_response(
+            row, bool(liked_result.data), participants_count, is_applied
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -704,10 +821,9 @@ async def update_event_post(
         if not update_data:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
-        if "event_start" in update_data and update_data["event_start"]:
-            update_data["event_start"] = update_data["event_start"].isoformat()
-        if "event_end" in update_data and update_data["event_end"]:
-            update_data["event_end"] = update_data["event_end"].isoformat()
+        for dt_field in ("application_start", "application_end", "event_start", "event_end"):
+            if dt_field in update_data and update_data[dt_field]:
+                update_data[dt_field] = update_data[dt_field].isoformat()
 
         supabase.table("posts").update(update_data).eq("id", str(post_id)).execute()
 
@@ -853,3 +969,92 @@ async def toggle_scrap(post_id: UUID, user: AuthenticatedUser):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
+
+
+@router.post("/event/{post_id}/apply", status_code=status.HTTP_201_CREATED)
+async def apply_for_event(post_id: UUID, user: AuthenticatedUser):
+    try:
+        post = (
+            supabase.table("posts")
+            .select("id, type, event_status, max_participants")
+            .eq("id", str(post_id))
+            .eq("type", PostType.EVENT.value)
+            .single()
+            .execute()
+        )
+
+        if not post.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        if post.data["event_status"] != EventStatus.OPEN.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Event is not open for applications",
+            )
+
+        existing = (
+            supabase.table("event_participants")
+            .select("user_id")
+            .eq("post_id", str(post_id))
+            .eq("user_id", str(user.id))
+            .execute()
+        )
+
+        if existing.data:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Already applied for this event",
+            )
+
+        if post.data.get("max_participants"):
+            current_count = (
+                supabase.table("event_participants")
+                .select("user_id", count=CountMethod.exact)
+                .eq("post_id", str(post_id))
+                .execute()
+            )
+            if (current_count.count or 0) >= post.data["max_participants"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Event has reached maximum participants",
+                )
+
+        supabase.table("event_participants").insert(
+            {"post_id": str(post_id), "user_id": str(user.id)}
+        ).execute()
+
+        return {"message": "Successfully applied for event"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.delete("/event/{post_id}/apply", status_code=status.HTTP_200_OK)
+async def cancel_event_application(post_id: UUID, user: AuthenticatedUser):
+    try:
+        result = (
+            supabase.table("event_participants")
+            .delete()
+            .eq("post_id", str(post_id))
+            .eq("user_id", str(user.id))
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No application found for this event",
+            )
+
+        return {"message": "Event application cancelled"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+

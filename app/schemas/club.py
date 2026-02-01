@@ -23,14 +23,14 @@ class ClubCreate(BaseModel):
     name: str
     description: str
 
-    category: list[ClubCategory]
+    category: ClubCategory
     anonymity: ClubAnonymity
 
 
 class ClubUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
-    category: list[ClubCategory] | None = None
+    category: ClubCategory | None = None
     anonymity: ClubAnonymity | None = None
 
 
@@ -47,7 +47,7 @@ class ClubResponse(BaseModel):
 
     name: str
     description: str
-    category: list[ClubCategory]
+    category: ClubCategory
     anonymity: ClubAnonymity
 
     member_count: int
@@ -64,4 +64,23 @@ class ClubResponse(BaseModel):
 
 class ClubListResponse(BaseModel):
     clubs: list[ClubResponse]
+    total: int
+
+
+class GalleryImageCreate(BaseModel):
+    image_url: str
+    caption: str | None = None
+
+
+class GalleryImageResponse(BaseModel):
+    id: UUID
+    club_id: UUID
+    image_url: str
+    caption: str | None
+    uploaded_by: UUID | None
+    created_at: datetime
+
+
+class GalleryListResponse(BaseModel):
+    images: list[GalleryImageResponse]
     total: int
