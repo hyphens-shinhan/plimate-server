@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    SUPABASE_PUBLISHABLE_KEY: str
     SECRET_KEY: str
     SUPABASE_URL: str
 
