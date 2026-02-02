@@ -13,9 +13,15 @@ class PostType(str, Enum):
 
 
 class EventStatus(str, Enum):
+    SCHEDULED = "SCHEDULED"
     OPEN = "OPEN"
     CLOSED = "CLOSED"
-    SCHEDULED = "SCHEDULED"
+
+
+class ApplicationStatus(str, Enum):
+    UPCOMING = "UPCOMING"
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
 
 
 class PostAuthor(BaseModel):
@@ -88,7 +94,6 @@ class EventPostUpdate(BaseModel):
     event_location: str | None = None
     is_mandatory: bool | None = None
 
-    event_status: EventStatus | None = None
     event_category: str | None = None
     max_participants: int | None = None
 
@@ -158,7 +163,9 @@ class EventPostResponse(BaseModel):
     is_liked: bool
     is_applied: bool = False
 
-    event_status: EventStatus | None = None
+    event_status: EventStatus
+    application_status: ApplicationStatus
+
     event_category: str | None = None
     max_participants: int | None = None
 

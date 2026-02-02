@@ -9,6 +9,7 @@ from app.core.deps import AuthenticatedUser
 from app.schemas.post import (
     PostType,
     EventStatus,
+    ApplicationStatus,
     PostAuthor,
     FeedPostCreate,
     NoticePostCreate,
@@ -71,6 +72,24 @@ def _build_notice_response(row: dict, is_liked: bool) -> NoticePostResponse:
     )
 
 
+def _compute_application_status(row: dict) -> ApplicationStatus:
+    now = datetime.now(timezone.utc)
+    if now < datetime.fromisoformat(row["application_start"]):
+        return ApplicationStatus.UPCOMING
+    if now > datetime.fromisoformat(row["application_end"]):
+        return ApplicationStatus.CLOSED
+    return ApplicationStatus.OPEN
+
+
+def _compute_event_status(row: dict) -> EventStatus:
+    now = datetime.now(timezone.utc)
+    if now < datetime.fromisoformat(row["event_start"]):
+        return EventStatus.SCHEDULED
+    if now > datetime.fromisoformat(row["event_end"]):
+        return EventStatus.CLOSED
+    return EventStatus.OPEN
+
+
 def _build_event_response(
     row: dict, is_liked: bool, participants_count: int = 0, is_applied: bool = False
 ) -> EventPostResponse:
@@ -90,7 +109,8 @@ def _build_event_response(
         comment_count=row.get("comment_count"),
         is_liked=is_liked,
         is_applied=is_applied,
-        event_status=row["event_status"],
+        event_status=_compute_event_status(row),
+        application_status=_compute_application_status(row),
         event_category=row["event_category"],
         max_participants=row.get("max_participants"),
         file_urls=row.get("file_urls"),
@@ -552,15 +572,6 @@ async def create_event_post(post: EventPostCreate, user: AuthenticatedUser):
                     "file_urls": post.file_urls,
                     "image_urls": post.image_urls,
                     "is_mandatory": post.is_mandatory,
-                    "event_status": (
-                        EventStatus.SCHEDULED.value
-                        if datetime.now(timezone.utc) < post.event_start
-                        else (
-                            EventStatus.CLOSED.value
-                            if datetime.now(timezone.utc) > post.event_end
-                            else EventStatus.OPEN.value
-                        )
-                    ),
                 }
             )
             .execute()
@@ -593,36 +604,29 @@ async def get_event_posts(
             .eq("type", PostType.EVENT.value)
         )
 
+        result = query.execute()
+        data = result.data
+
         if event_status:
-            query = (
-                query.eq("event_status", event_status.value)
-                .order("event_end", desc=False)
-                .range(offset, offset + limit - 1)
-            )
-            result = query.execute()
-        else:
-            result = query.execute()
-            data = result.data
+            data = [
+                row for row in data
+                if _compute_event_status(row) == event_status
+            ]
 
-            status_priority = {
-                EventStatus.OPEN.value: 1,
-                EventStatus.SCHEDULED.value: 2,
-                EventStatus.CLOSED.value: 3,
-            }
+        status_priority = {
+            EventStatus.OPEN: 1,
+            EventStatus.SCHEDULED: 2,
+            EventStatus.CLOSED: 3,
+        }
 
-            def sort_key(x):
-                return (
-                    status_priority.get(x.get("event_status"), 99),
-                    x.get("event_end"),
-                )
+        data.sort(key=lambda x: (
+            status_priority.get(_compute_event_status(x), 99),
+            x.get("event_end"),
+        ))
 
-            data.sort(key=sort_key)
-
-            total_count = len(data)
-            sliced_data = data[offset : offset + limit]
-
-            result.data = sliced_data
-            result.count = total_count
+        total_count = len(data)
+        result.data = data[offset : offset + limit]
+        result.count = total_count
 
         liked_result = (
             supabase.table("post_interactions")
@@ -976,7 +980,7 @@ async def apply_for_event(post_id: UUID, user: AuthenticatedUser):
     try:
         post = (
             supabase.table("posts")
-            .select("id, type, event_status, max_participants")
+            .select("id, type, application_start, application_end, max_participants")
             .eq("id", str(post_id))
             .eq("type", PostType.EVENT.value)
             .single()
@@ -986,10 +990,11 @@ async def apply_for_event(post_id: UUID, user: AuthenticatedUser):
         if not post.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
-        if post.data["event_status"] != EventStatus.OPEN.value:
+        app_status = _compute_application_status(post.data)
+        if app_status != ApplicationStatus.OPEN:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Event is not open for applications",
+                detail="Application period is not open",
             )
 
         existing = (
