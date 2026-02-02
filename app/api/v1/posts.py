@@ -6,6 +6,8 @@ from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
+from app.core.notifications import create_notification
+from app.schemas.notification import NotificationType
 from app.schemas.post import (
     PostType,
     EventStatus,
@@ -184,7 +186,9 @@ async def get_feed_posts(
         author_ids = {
             row["author_id"]
             for row in result.data
-            if not row["is_anonymous"] and row["author_id"] and str(row["author_id"]) != str(user.id)
+            if not row["is_anonymous"]
+            and row["author_id"]
+            and str(row["author_id"]) != str(user.id)
         }
 
         following_ids = set()
@@ -334,7 +338,7 @@ async def get_feed_post(
                 .maybe_single()
                 .execute()
             )
-            is_following = bool(check.data)
+            is_following = check is not None and check.data is not None
 
         return _build_feed_response(
             row, author_data, is_liked, is_scrapped, is_following
@@ -608,10 +612,7 @@ async def get_event_posts(
         data = result.data
 
         if event_status:
-            data = [
-                row for row in data
-                if _compute_event_status(row) == event_status
-            ]
+            data = [row for row in data if _compute_event_status(row) == event_status]
 
         status_priority = {
             EventStatus.OPEN: 1,
@@ -619,10 +620,12 @@ async def get_event_posts(
             EventStatus.CLOSED: 3,
         }
 
-        data.sort(key=lambda x: (
-            status_priority.get(_compute_event_status(x), 99),
-            x.get("event_end"),
-        ))
+        data.sort(
+            key=lambda x: (
+                status_priority.get(_compute_event_status(x), 99),
+                x.get("event_end"),
+            )
+        )
 
         total_count = len(data)
         result.data = data[offset : offset + limit]
@@ -639,23 +642,33 @@ async def get_event_posts(
 
         event_ids = [row["id"] for row in result.data]
         applied_result = (
-            supabase.table("event_participants")
-            .select("post_id")
-            .eq("user_id", str(user.id))
-            .in_("post_id", event_ids)
-            .execute()
-        ) if event_ids else type("R", (), {"data": []})()
+            (
+                supabase.table("event_participants")
+                .select("post_id")
+                .eq("user_id", str(user.id))
+                .in_("post_id", event_ids)
+                .execute()
+            )
+            if event_ids
+            else type("R", (), {"data": []})()
+        )
         applied_post_ids = {row["post_id"] for row in (applied_result.data or [])}
 
         participant_counts_result = (
-            supabase.table("event_participants")
-            .select("post_id")
-            .in_("post_id", event_ids)
-            .execute()
-        ) if event_ids else type("R", (), {"data": []})()
+            (
+                supabase.table("event_participants")
+                .select("post_id")
+                .in_("post_id", event_ids)
+                .execute()
+            )
+            if event_ids
+            else type("R", (), {"data": []})()
+        )
         participant_counts: dict[str, int] = {}
-        for row in (participant_counts_result.data or []):
-            participant_counts[row["post_id"]] = participant_counts.get(row["post_id"], 0) + 1
+        for row in participant_counts_result.data or []:
+            participant_counts[row["post_id"]] = (
+                participant_counts.get(row["post_id"], 0) + 1
+            )
 
         posts = []
         for row in result.data:
@@ -721,8 +734,10 @@ async def get_my_applied_events(
             .execute()
         )
         participant_counts: dict[str, int] = {}
-        for row in (participant_counts_result.data or []):
-            participant_counts[row["post_id"]] = participant_counts.get(row["post_id"], 0) + 1
+        for row in participant_counts_result.data or []:
+            participant_counts[row["post_id"]] = (
+                participant_counts.get(row["post_id"], 0) + 1
+            )
 
         post_map = {row["id"]: row for row in (result.data or [])}
         posts = []
@@ -737,7 +752,9 @@ async def get_my_applied_events(
                     )
                 )
 
-        return EventPostListResponse(posts=posts, total=applications.count or len(posts))
+        return EventPostListResponse(
+            posts=posts, total=applications.count or len(posts)
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -825,7 +842,12 @@ async def update_event_post(
         if not update_data:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
-        for dt_field in ("application_start", "application_end", "event_start", "event_end"):
+        for dt_field in (
+            "application_start",
+            "application_end",
+            "event_start",
+            "event_end",
+        ):
             if dt_field in update_data and update_data[dt_field]:
                 update_data[dt_field] = update_data[dt_field].isoformat()
 
@@ -869,7 +891,7 @@ async def toggle_like(post_id: UUID, user: AuthenticatedUser):
     try:
         post = (
             supabase.table("posts")
-            .select("id, like_count")
+            .select("id, author_id, like_count")
             .eq("id", str(post_id))
             .single()
             .execute()
@@ -905,6 +927,13 @@ async def toggle_like(post_id: UUID, user: AuthenticatedUser):
                     "type": "LIKE",
                 }
             ).execute()
+
+            create_notification(
+                recipient_id=UUID(post.data["author_id"]),
+                notification_type=NotificationType.LIKE,
+                actor_id=user.id,
+                post_id=post_id,
+            )
 
         new_count = post.data["like_count"] + 1
         supabase.table("posts").update({"like_count": new_count}).eq(
@@ -1061,5 +1090,3 @@ async def cancel_event_application(post_id: UUID, user: AuthenticatedUser):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
-
-
