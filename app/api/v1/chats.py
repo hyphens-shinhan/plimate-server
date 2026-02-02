@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
+from app.core.notifications import create_notification
+from app.schemas.notification import NotificationType
 from app.schemas.chat import (
     ChatRoomType,
     MessageCreate,
@@ -322,7 +324,6 @@ async def join_club_chat(club_id: UUID, user: AuthenticatedUser):
     await _check_club_member(str(user.id), str(club_id))
 
     try:
-        # Get or create the club's chat room
         room_result = (
             supabase.table("chat_rooms")
             .select("*")
@@ -334,7 +335,6 @@ async def join_club_chat(club_id: UUID, user: AuthenticatedUser):
         if room_result and room_result.data:
             room = room_result.data
         else:
-            # Fetch club info for room name/image
             club = (
                 supabase.table("clubs")
                 .select("name, image_url")
@@ -734,7 +734,46 @@ async def send_message(room_id: UUID, msg: MessageCreate, user: AuthenticatedUse
 
         new_msg = result.data[0]
 
-        # Fetch sender info
+        room_info = (
+            supabase.table("chat_rooms")
+            .select("type, club_id")
+            .eq("id", str(room_id))
+            .single()
+            .execute()
+        )
+
+        members = (
+            supabase.table("chat_room_members")
+            .select("user_id")
+            .eq("room_id", str(room_id))
+            .neq("user_id", str(user.id))
+            .execute()
+        )
+
+        actor_id = user.id
+        club_id = None
+
+        if room_info.data and room_info.data.get("club_id"):
+            club_id = room_info.data["club_id"]
+            club_data = (
+                supabase.table("clubs")
+                .select("anonymity")
+                .eq("id", str(club_id))
+                .single()
+                .execute()
+            )
+            if club_data.data and club_data.data["anonymity"] in ("PRIVATE", "BOTH"):
+                actor_id = None
+
+        for member in members.data:
+            create_notification(
+                recipient_id=UUID(member["user_id"]),
+                notification_type=NotificationType.CHAT_MESSAGE,
+                actor_id=actor_id,
+                room_id=room_id,
+                club_id=UUID(club_id) if club_id else None,
+            )
+
         sender_result = (
             supabase.table("users")
             .select("name, avatar_url")

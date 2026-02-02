@@ -5,6 +5,8 @@ from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
+from app.core.notifications import create_notification
+from app.schemas.notification import NotificationType
 from app.schemas.comment import (
     CommentAuthor,
     CommentCreate,
@@ -45,7 +47,7 @@ async def create_comment(
     try:
         post = (
             supabase.table("posts")
-            .select("id")
+            .select("id, author_id")
             .eq("id", str(post_id))
             .single()
             .execute()
@@ -57,7 +59,7 @@ async def create_comment(
         if comment.parent_id:
             parent = (
                 supabase.table("post_comments")
-                .select("id")
+                .select("id, author_id")
                 .eq("id", str(comment.parent_id))
                 .eq("post_id", str(post_id))
                 .single()
@@ -87,6 +89,24 @@ async def create_comment(
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         supabase.rpc("increment_comment_count", {"post_id": str(post_id)}).execute()
+
+        new_comment_id = UUID(result.data[0]["id"])
+        if comment.parent_id:
+            create_notification(
+                recipient_id=UUID(parent.data["author_id"]),
+                notification_type=NotificationType.COMMENT_REPLY,
+                actor_id=user.id,
+                comment_id=new_comment_id,
+                post_id=post_id,
+            )
+        else:
+            create_notification(
+                recipient_id=UUID(post.data["author_id"]),
+                notification_type=NotificationType.COMMENT,
+                actor_id=user.id,
+                comment_id=new_comment_id,
+                post_id=post_id,
+            )
 
         return await get_comment(post_id, result.data[0]["id"], user)
     except Exception as e:

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import users, follows, blocks, posts, comments, clubs, councils, reports, chats
+from app.api.v1 import users, follows, blocks, posts, comments, clubs, councils, reports, chats, notifications
 
 router = APIRouter(prefix="/api/v1")
 
@@ -13,3 +13,4 @@ router.include_router(clubs.router)
 router.include_router(councils.router)
 router.include_router(reports.router)
 router.include_router(chats.router)
+router.include_router(notifications.router)

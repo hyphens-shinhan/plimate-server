@@ -5,6 +5,8 @@ from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
+from app.core.notifications import create_notification
+from app.schemas.notification import NotificationType
 from app.schemas.follow import (
     FollowStatusResponse,
     FollowUser,
@@ -69,6 +71,12 @@ async def send_follow_request(user_id: UUID, user: AuthenticatedUser):
         .execute()
     )
 
+    create_notification(
+        recipient_id=user_id,
+        notification_type=NotificationType.FOLLOW_REQUEST,
+        actor_id=user.id,
+    )
+
     return {"message": "Successfully followed user"}
 
 
@@ -112,7 +120,7 @@ async def get_pending_requests(
 async def accept_follow_request(request_id: UUID, user: AuthenticatedUser):
     existing = (
         supabase.table("follows")
-        .select("id, receiver_id, status")
+        .select("id, requester_id, receiver_id, status")
         .eq("id", str(request_id))
         .single()
         .execute()
@@ -132,6 +140,12 @@ async def accept_follow_request(request_id: UUID, user: AuthenticatedUser):
         .update({"status": "ACCEPTED", "accepted_at": "now()"})
         .eq("id", str(request_id))
     ).execute()
+
+    create_notification(
+        recipient_id=UUID(existing.data["requester_id"]),
+        notification_type=NotificationType.FOLLOW_ACCEPT,
+        actor_id=user.id,
+    )
 
     return {"message": "Follow request accepted"}
 
