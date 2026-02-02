@@ -15,6 +15,8 @@ from app.schemas.club import (
     GalleryImageCreate,
     GalleryImageResponse,
     GalleryListResponse,
+    ClubMember,
+    ClubMemberListResponse,
 )
 
 router = APIRouter(prefix="/clubs", tags=["clubs"])
@@ -444,6 +446,57 @@ async def delete_gallery_image(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
         return {"message": "Gallery image deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.get("/{club_id}/members", response_model=ClubMemberListResponse)
+async def get_club_members(
+    club_id: UUID,
+    user: AuthenticatedUser,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    try:
+        club = (
+            supabase.table("clubs")
+            .select("id")
+            .eq("id", str(club_id))
+            .single()
+            .execute()
+        )
+
+        if not club.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        result = (
+            supabase.table("club_members")
+            .select(
+                "user_id, users!club_members_user_id_fkey(id, name, avatar_url)",
+                count=CountMethod.exact,
+            )
+            .eq("club_id", str(club_id))
+            .order("joined_at", desc=False)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+
+        members = []
+        for row in result.data:
+            if user_data := row.get("users"):
+                members.append(
+                    ClubMember(
+                        id=user_data["id"],
+                        name=user_data["name"],
+                        avatar_url=user_data.get("avatar_url"),
+                    )
+                )
+
+        return ClubMemberListResponse(members=members, total=result.count or 0)
     except HTTPException:
         raise
     except Exception as e:

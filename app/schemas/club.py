@@ -84,3 +84,14 @@ class GalleryImageResponse(BaseModel):
 class GalleryListResponse(BaseModel):
     images: list[GalleryImageResponse]
     total: int
+
+
+class ClubMember(BaseModel):
+    id: UUID
+    name: str
+    avatar_url: str | None = None
+
+
+class ClubMemberListResponse(BaseModel):
+    members: list[ClubMember]
+    total: int
