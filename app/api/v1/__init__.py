@@ -12,6 +12,7 @@ from app.api.v1 import (
     chats,
     notifications,
     academic,
+    activities,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -27,3 +28,4 @@ router.include_router(reports.router)
 router.include_router(chats.router)
 router.include_router(notifications.router)
 router.include_router(academic.router)
+router.include_router(activities.router)

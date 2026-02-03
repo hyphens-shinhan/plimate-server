@@ -64,6 +64,7 @@ class AttendanceResponse(BaseModel):
 class ReportResponse(BaseModel):
     id: UUID
     council_id: UUID
+    year: int
     month: int
     title: str
     activity_date: date

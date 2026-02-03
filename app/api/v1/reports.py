@@ -16,6 +16,31 @@ from app.schemas.report import (
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+async def _get_council_and_validate_year(council_id: str, year: int) -> int:
+    """Get council and validate that the year matches."""
+    result = (
+        supabase.table("councils")
+        .select("year")
+        .eq("id", council_id)
+        .single()
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Council not found"
+        )
+
+    council_year = result.data["year"]
+    if council_year != year:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Year {year} does not match council year {council_year}",
+        )
+
+    return council_year
+
+
 async def _check_council_leader(user_id: str, council_id: str):
     """Verify that the user is the leader of the specified council."""
     try:
@@ -94,6 +119,7 @@ def _build_receipt_responses(
 
 def _build_report_response(
     report: dict,
+    year: int,
     receipts: list[dict],
     receipt_items: list[dict],
     attendance: list[dict],
@@ -101,6 +127,7 @@ def _build_report_response(
     return ReportResponse(
         id=report["id"],
         council_id=report["council_id"],
+        year=year,
         month=report["month"],
         title=report["title"],
         activity_date=report["activity_date"],
@@ -121,22 +148,24 @@ def _build_report_response(
 
 
 @router.post(
-    "/{council_id}/{month}",
+    "/council/{council_id}/{year}/{month}",
     response_model=ReportResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_report(
     council_id: UUID,
+    year: int,
     month: int = Path(..., ge=4, le=12),
     *,
     report: ReportCreate,
     user: AuthenticatedUser,
 ):
     """
-    Submit an activity report for a council and month.
+    Submit an activity report for a council, year, and month.
     Only the council leader can submit reports.
     Includes receipts with line items and member attendance records.
     """
+    await _get_council_and_validate_year(str(council_id), year)
     await _check_council_leader(str(user.id), str(council_id))
 
     try:
@@ -218,7 +247,7 @@ async def create_report(
             attendance_data = attendance_result.data or []
 
         return _build_report_response(
-            new_report, all_receipts, all_receipt_items, attendance_data
+            new_report, year, all_receipts, all_receipt_items, attendance_data
         )
     except HTTPException:
         raise
@@ -228,17 +257,19 @@ async def create_report(
         )
 
 
-@router.get("/{council_id}/{month}", response_model=ReportResponse)
+@router.get("/council/{council_id}/{year}/{month}", response_model=ReportResponse)
 async def get_report(
     council_id: UUID,
+    year: int,
     month: int = Path(..., ge=4, le=12),
     *,
     user: AuthenticatedUser,
 ):
     """
-    Get the activity report for a council and month.
+    Get the activity report for a council, year, and month.
     Only council members can view reports.
     """
+    await _get_council_and_validate_year(str(council_id), year)
     await _check_council_member(str(user.id), str(council_id))
 
     try:
@@ -287,7 +318,7 @@ async def get_report(
         )
 
         return _build_report_response(
-            report, receipts, receipt_items, attendance_result.data or []
+            report, year, receipts, receipt_items, attendance_result.data or []
         )
     except HTTPException:
         raise
@@ -298,7 +329,7 @@ async def get_report(
 
 
 @router.patch(
-    "/{report_id}/attendance/confirm",
+    "/council/{report_id}/attendance/confirm",
     response_model=AttendanceResponse,
 )
 async def confirm_attendance(report_id: UUID, user: AuthenticatedUser):
@@ -352,7 +383,7 @@ async def confirm_attendance(report_id: UUID, user: AuthenticatedUser):
 
 
 @router.patch(
-    "/{report_id}/attendance/reject",
+    "/council/{report_id}/attendance/reject",
     response_model=AttendanceResponse,
 )
 async def reject_attendance(report_id: UUID, user: AuthenticatedUser):

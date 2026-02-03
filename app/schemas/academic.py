@@ -41,7 +41,9 @@ class AcademicReportResponse(BaseModel):
     user_id: UUID
     year: int
     month: int
-    submitted_at: datetime
+    is_submitted: bool
+    created_at: datetime
+    submitted_at: datetime | None
     evidence_urls: list[str] | None
     goals: list[GoalResponse]
 

@@ -15,24 +15,36 @@ from app.schemas.academic import (
     GoalResponse,
 )
 
-router = APIRouter(prefix="/academic", tags=["academic"])
+router = APIRouter(prefix="/reports/academic", tags=["academic"])
 
 
-async def _check_academic_monitoring(user_id: str):
-    """Verify the user has academic monitoring enabled."""
+async def _check_academic_monitoring_for_year(user_id: str, year: int):
+    """Verify the user has academic monitoring enabled for the given year."""
     result = (
-        supabase.table("user_profiles")
-        .select("is_academic_monitoring")
+        supabase.table("academic_monitoring_years")
+        .select("year")
         .eq("user_id", user_id)
-        .single()
+        .eq("year", year)
         .execute()
     )
 
-    if not result.data or not result.data.get("is_academic_monitoring"):
+    if not result.data:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Academic monitoring is not enabled for this user",
+            detail=f"Academic monitoring is not enabled for this user in {year}",
         )
+
+
+async def _get_user_monitoring_years(user_id: str) -> list[int]:
+    """Get all years the user is monitored for."""
+    result = (
+        supabase.table("academic_monitoring_years")
+        .select("year")
+        .eq("user_id", user_id)
+        .order("year", desc=True)
+        .execute()
+    )
+    return [r["year"] for r in result.data or []]
 
 
 async def _check_admin(user_id: str):
@@ -52,7 +64,9 @@ def _build_report_response(report: dict, goals: list[dict]) -> AcademicReportRes
         user_id=report["user_id"],
         year=report["year"],
         month=report["month"],
-        submitted_at=report["submitted_at"],
+        is_submitted=report.get("is_submitted", False),
+        created_at=report["created_at"],
+        submitted_at=report.get("submitted_at"),
         evidence_urls=report.get("evidence_urls"),
         goals=[
             GoalResponse(
@@ -76,7 +90,7 @@ async def create_academic_report(
     report: AcademicReportCreate,
     user: AuthenticatedUser,
 ):
-    await _check_academic_monitoring(str(user.id))
+    await _check_academic_monitoring_for_year(str(user.id), report.year)
 
     try:
         report_result = (
@@ -130,17 +144,27 @@ async def create_academic_report(
 @router.get("", response_model=AcademicReportListResponse)
 async def list_my_reports(
     user: AuthenticatedUser,
+    year: int | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    await _check_academic_monitoring(str(user.id))
+    # If year specified, check monitoring for that year; otherwise list all
+    monitoring_years = await _get_user_monitoring_years(str(user.id))
+    if not monitoring_years:
+        return AcademicReportListResponse(reports=[], total=0)
 
     try:
-        result = (
+        query = (
             supabase.table("academic_reports")
             .select("*", count=CountMethod.exact)
             .eq("user_id", str(user.id))
-            .order("submitted_at", desc=True)
+        )
+
+        if year:
+            query = query.eq("year", year)
+
+        result = (
+            query.order("created_at", desc=True)
             .range(offset, offset + limit - 1)
             .execute()
         )
@@ -164,46 +188,13 @@ async def list_my_reports(
         )
 
 
-@router.get("/{report_id}", response_model=AcademicReportResponse)
-async def get_academic_report(report_id: UUID, user: AuthenticatedUser):
-    await _check_academic_monitoring(str(user.id))
-
-    try:
-        report_result = (
-            supabase.table("academic_reports")
-            .select("*")
-            .eq("id", str(report_id))
-            .eq("user_id", str(user.id))
-            .single()
-            .execute()
-        )
-
-        if not report_result.data:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-
-        goals_result = (
-            supabase.table("academic_goals")
-            .select("*")
-            .eq("report_id", str(report_id))
-            .execute()
-        )
-
-        return _build_report_response(report_result.data, goals_result.data or [])
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
-        )
-
-
 @router.get("/{year}/{month}", response_model=AcademicReportLookupResponse)
 async def get_report_by_year_month(
     year: int,
     month: int,
     user: AuthenticatedUser,
 ):
-    await _check_academic_monitoring(str(user.id))
+    await _check_academic_monitoring_for_year(str(user.id), year)
 
     try:
         # Look for specific year/month report
@@ -248,8 +239,7 @@ async def update_academic_report(
     update: AcademicReportUpdate,
     user: AuthenticatedUser,
 ):
-    await _check_academic_monitoring(str(user.id))
-
+    """Update a draft academic report. Cannot edit after final submission."""
     try:
         # Verify report exists and belongs to user
         report_result = (
@@ -262,6 +252,19 @@ async def update_academic_report(
 
         if not report_result.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        existing_report = report_result.data[0]
+
+        # Prevent editing submitted reports
+        if existing_report.get("is_submitted"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot edit a submitted report",
+            )
+
+        # Check monitoring for the report's year
+        report_year = existing_report["year"]
+        await _check_academic_monitoring_for_year(str(user.id), report_year)
 
         # Update evidence_urls on the report
         supabase.table("academic_reports").update(
@@ -308,37 +311,156 @@ async def update_academic_report(
         )
 
 
-# ── Admin endpoints ──
-
-
-@router.patch("/admin/users/{user_id}/monitoring")
-async def toggle_academic_monitoring(user_id: UUID, user: AuthenticatedUser):
-    await _check_admin(str(user.id))
-
+@router.post("/{report_id}/submit", response_model=AcademicReportResponse)
+async def submit_academic_report(
+    report_id: UUID,
+    user: AuthenticatedUser,
+):
+    """Finalize and submit an academic report. Cannot be undone."""
     try:
-        current = (
-            supabase.table("user_profiles")
-            .select("is_academic_monitoring")
-            .eq("user_id", str(user_id))
+        # Verify report exists and belongs to user
+        report_result = (
+            supabase.table("academic_reports")
+            .select("*")
+            .eq("id", str(report_id))
+            .eq("user_id", str(user.id))
+            .execute()
+        )
+
+        if not report_result.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        existing_report = report_result.data[0]
+
+        # Check if already submitted
+        if existing_report.get("is_submitted"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Report has already been submitted",
+            )
+
+        # Check monitoring for the report's year
+        report_year = existing_report["year"]
+        await _check_academic_monitoring_for_year(str(user.id), report_year)
+
+        # Submit the report
+        supabase.table("academic_reports").update(
+            {"is_submitted": True, "submitted_at": "now()"}
+        ).eq("id", str(report_id)).execute()
+
+        # Fetch updated report
+        updated_report = (
+            supabase.table("academic_reports")
+            .select("*")
+            .eq("id", str(report_id))
             .single()
             .execute()
         )
 
-        if not current.data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User profile not found",
-            )
+        goals_result = (
+            supabase.table("academic_goals")
+            .select("*")
+            .eq("report_id", str(report_id))
+            .execute()
+        )
 
-        new_value = not current.data.get("is_academic_monitoring", False)
-
-        supabase.table("user_profiles").update(
-            {"is_academic_monitoring": new_value}
-        ).eq("user_id", str(user_id)).execute()
-
-        return {"user_id": str(user_id), "is_academic_monitoring": new_value}
+        return _build_report_response(updated_report.data, goals_result.data or [])
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+# ── Admin endpoints ──
+
+
+@router.post("/admin/users/{user_id}/monitoring/{year}", status_code=status.HTTP_201_CREATED)
+async def enable_academic_monitoring(
+    user_id: UUID, year: int, user: AuthenticatedUser
+):
+    """Enable academic monitoring for a user for a specific year."""
+    await _check_admin(str(user.id))
+
+    try:
+        # Check if already exists
+        existing = (
+            supabase.table("academic_monitoring_years")
+            .select("year")
+            .eq("user_id", str(user_id))
+            .eq("year", year)
+            .execute()
+        )
+
+        if existing.data:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Monitoring already enabled for {year}",
+            )
+
+        supabase.table("academic_monitoring_years").insert(
+            {"user_id": str(user_id), "year": year}
+        ).execute()
+
+        return {"user_id": str(user_id), "year": year, "enabled": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.delete("/admin/users/{user_id}/monitoring/{year}", status_code=status.HTTP_200_OK)
+async def disable_academic_monitoring(
+    user_id: UUID, year: int, user: AuthenticatedUser
+):
+    """Disable academic monitoring for a user for a specific year."""
+    await _check_admin(str(user.id))
+
+    try:
+        result = (
+            supabase.table("academic_monitoring_years")
+            .delete()
+            .eq("user_id", str(user_id))
+            .eq("year", year)
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Monitoring not enabled for {year}",
+            )
+
+        return {"user_id": str(user_id), "year": year, "enabled": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.get("/admin/users/{user_id}/monitoring")
+async def get_user_monitoring_years(user_id: UUID, user: AuthenticatedUser):
+    """Get all years a user is monitored for."""
+    await _check_admin(str(user.id))
+
+    try:
+        result = (
+            supabase.table("academic_monitoring_years")
+            .select("year")
+            .eq("user_id", str(user_id))
+            .order("year", desc=True)
+            .execute()
+        )
+
+        return {
+            "user_id": str(user_id),
+            "years": [r["year"] for r in result.data or []],
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -362,7 +484,7 @@ async def list_user_reports(
             supabase.table("academic_reports")
             .select("*", count=CountMethod.exact)
             .eq("user_id", str(user_id))
-            .order("submitted_at", desc=True)
+            .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
             .execute()
         )
