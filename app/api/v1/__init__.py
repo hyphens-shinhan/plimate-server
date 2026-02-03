@@ -11,7 +11,7 @@ from app.api.v1 import (
     reports,
     chats,
     notifications,
-    academic,
+    academics,
     activities,
 )
 
@@ -27,5 +27,5 @@ router.include_router(councils.router)
 router.include_router(reports.router)
 router.include_router(chats.router)
 router.include_router(notifications.router)
-router.include_router(academic.router)
+router.include_router(academics.router)
 router.include_router(activities.router)
