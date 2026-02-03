@@ -7,6 +7,7 @@ from app.schemas.notification import NotificationType
 def create_notification(
     recipient_id: UUID,
     notification_type: NotificationType,
+    message: str | None = None,
     actor_id: UUID | None = None,
     post_id: UUID | None = None,
     comment_id: UUID | None = None,
@@ -21,6 +22,7 @@ def create_notification(
             {
                 "recipient_id": str(recipient_id),
                 "type": notification_type.value,
+                "message": message if message else None,
                 "actor_id": str(actor_id) if actor_id else None,
                 "post_id": str(post_id) if post_id else None,
                 "comment_id": str(comment_id) if comment_id else None,
