@@ -103,6 +103,8 @@ def _build_report_response(
         council_id=report["council_id"],
         month=report["month"],
         title=report["title"],
+        activity_date=report["activity_date"],
+        location=report["location"],
         content=report.get("content"),
         image_urls=report.get("image_urls"),
         submitted_at=report["submitted_at"],
@@ -143,6 +145,8 @@ async def create_report(
             "council_id": str(council_id),
             "month": month,
             "title": report.title,
+            "activity_date": report.activity_date.isoformat(),
+            "location": report.location,
             "content": report.content,
             "image_urls": report.image_urls,
         }

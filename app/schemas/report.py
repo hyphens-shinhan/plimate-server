@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from uuid import UUID
 
@@ -33,6 +33,8 @@ class AttendanceItem(BaseModel):
 
 class ReportCreate(BaseModel):
     title: str
+    activity_date: date
+    location: str
     content: str | None = None
     image_urls: list[str] | None = None
     receipts: list[ReceiptCreate] | None = None
@@ -64,6 +66,8 @@ class ReportResponse(BaseModel):
     council_id: UUID
     month: int
     title: str
+    activity_date: date
+    location: str
     submitted_at: datetime
     receipts: list[ReceiptResponse]
     attendance: list[AttendanceResponse]
