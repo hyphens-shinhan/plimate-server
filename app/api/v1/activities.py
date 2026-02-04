@@ -7,10 +7,15 @@ from app.core.deps import AuthenticatedUser
 from app.schemas.activity import (
     AcademicReportStatus,
     ActivitiesSummaryResponse,
+    AppliedEventStatus,
+    AppliedEventsStatus,
     CouncilReportStatus,
+    MandatoryActivityStatus,
+    MandatoryReportStatus,
     MonthlyActivityStatus,
     YearlyActivitySummary,
 )
+from app.schemas.post import EventStatus
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 
@@ -37,6 +42,16 @@ def _get_year_range(
     min_year = min(all_years)
     max_year = current_year
     return min_year, max_year, list(range(min_year, max_year + 1))
+
+
+def _get_event_status(event_start: datetime, event_end: datetime | None) -> EventStatus:
+    """Derive event status from dates."""
+    now = datetime.now(event_start.tzinfo)
+    if event_start > now:
+        return EventStatus.SCHEDULED
+    if event_end and now < event_end:
+        return EventStatus.OPEN
+    return EventStatus.CLOSED
 
 
 @router.get("", response_model=ActivitiesSummaryResponse)
@@ -96,9 +111,56 @@ async def get_activities_summary(user: AuthenticatedUser):
         academic_data = academic_result.data or []
         academic_years = list({r["year"] for r in academic_data})
 
+        # Get all mandatory activities
+        mandatory_activities_result = (
+            supabase.table("mandatory_activities")
+            .select("id, year, title, due_date, activity_type")
+            .execute()
+        )
+
+        # Group activities by year
+        mandatory_activities_by_year: dict[int, list[dict]] = {}
+        for a in mandatory_activities_result.data or []:
+            mandatory_activities_by_year.setdefault(a["year"], []).append(a)
+        mandatory_years = list(mandatory_activities_by_year.keys())
+
+        # Get user's mandatory submissions
+        mandatory_submissions_result = (
+            supabase.table("mandatory_submissions")
+            .select("activity_id, is_submitted")
+            .eq("user_id", str(user.id))
+            .execute()
+        )
+        mandatory_submissions_by_activity: dict[str, bool] = {
+            s["activity_id"]: s["is_submitted"]
+            for s in mandatory_submissions_result.data or []
+        }
+
+        # Get user's applied events
+        applied_events_result = (
+            supabase.table("event_participants")
+            .select("post_id, posts(id, title, event_start, event_end)")
+            .eq("user_id", str(user.id))
+            .execute()
+        )
+
+        # Group events by year based on event_start
+        events_by_year: dict[int, list[dict]] = {}
+        for e in applied_events_result.data or []:
+            post = e.get("posts")
+            if post and post.get("event_start"):
+                event_start = datetime.fromisoformat(
+                    post["event_start"].replace("Z", "+00:00")
+                )
+                event_year = event_start.year
+                events_by_year.setdefault(event_year, []).append(post)
+        event_years = list(events_by_year.keys())
+
         # Calculate available years
         min_year, max_year, available_years = _get_year_range(
-            council_years, academic_years, list(monitoring_years)
+            council_years,
+            academic_years + mandatory_years + event_years,
+            list(monitoring_years),
         )
 
         # Build council reports lookup: {year: {month: title}}
@@ -156,6 +218,40 @@ async def get_activities_summary(user: AuthenticatedUser):
                 ACADEMIC_REPORT_MONTHS
             )
 
+            # Build mandatory report status with list of activities
+            activities_for_year = mandatory_activities_by_year.get(year, [])
+            mandatory_activity_statuses = [
+                MandatoryActivityStatus(
+                    id=a["id"],
+                    title=a["title"],
+                    activity_type=a["activity_type"],
+                    is_submitted=mandatory_submissions_by_activity.get(a["id"], False),
+                    due_date=a["due_date"],
+                )
+                for a in activities_for_year
+            ]
+
+            # Build applied events status
+            events_for_year = events_by_year.get(year, [])
+            applied_event_statuses = []
+            for e in events_for_year:
+                event_start = datetime.fromisoformat(
+                    e["event_start"].replace("Z", "+00:00")
+                )
+                event_end = None
+                if e.get("event_end"):
+                    event_end = datetime.fromisoformat(
+                        e["event_end"].replace("Z", "+00:00")
+                    )
+                applied_event_statuses.append(
+                    AppliedEventStatus(
+                        id=e["id"],
+                        title=e["title"],
+                        event_date=event_start,
+                        status=_get_event_status(event_start, event_end),
+                    )
+                )
+
             yearly_summaries.append(
                 YearlyActivitySummary(
                     year=year,
@@ -164,6 +260,12 @@ async def get_activities_summary(user: AuthenticatedUser):
                     council_all_completed=council_all_completed,
                     academic_all_completed=academic_all_completed,
                     academic_is_monitored=is_monitored,
+                    mandatory_report=MandatoryReportStatus(
+                        activities=mandatory_activity_statuses,
+                    ),
+                    applied_events=AppliedEventsStatus(
+                        events=applied_event_statuses,
+                    ),
                 )
             )
 
