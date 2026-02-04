@@ -67,8 +67,8 @@ class ReportResponse(BaseModel):
     year: int
     month: int
     title: str
-    activity_date: date
-    location: str
+    activity_date: date | None
+    location: str | None
     submitted_at: datetime
     receipts: list[ReceiptResponse]
     attendance: list[AttendanceResponse]
