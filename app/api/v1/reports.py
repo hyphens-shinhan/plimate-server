@@ -409,13 +409,14 @@ async def update_report(
             # Delete existing attendance
             supabase.table("activity_attendance").delete().eq("report_id", report_id).execute()
 
-            # Insert new attendance
+            # Insert new attendance - leader is confirmed by default
             if report_update.attendance:
                 attendance_rows = [
                     {
                         "report_id": report_id,
                         "user_id": str(a.user_id),
                         "status": a.status.value,
+                        "confirmation": "CONFIRMED" if str(a.user_id) == str(leader_id) else "PENDING",
                     }
                     for a in report_update.attendance
                 ]
