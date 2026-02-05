@@ -71,6 +71,7 @@ class AttendanceResponse(BaseModel):
     avatar_url: str | None = None
     status: AttendanceStatus
     confirmation: ConfirmationStatus
+    is_leader: bool = False
 
 
 class ReportResponse(BaseModel):

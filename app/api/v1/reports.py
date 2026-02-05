@@ -127,6 +127,7 @@ def _build_report_response(
     receipts: list[dict],
     receipt_items: list[dict],
     attendance: list[dict],
+    leader_id: str | None = None,
 ) -> ReportResponse:
     return ReportResponse(
         id=report["id"],
@@ -155,6 +156,7 @@ def _build_report_response(
                 ),
                 status=a["status"],
                 confirmation=a["confirmation"],
+                is_leader=(str(a["user_id"]) == str(leader_id)) if leader_id else False,
             )
             for a in attendance
         ],
@@ -177,6 +179,16 @@ async def get_report(
     await _check_council_member(str(user.id), str(council_id))
 
     try:
+        # Fetch council to get leader_id
+        council_result = (
+            supabase.table("councils")
+            .select("leader_id")
+            .eq("id", str(council_id))
+            .single()
+            .execute()
+        )
+        leader_id = council_result.data.get("leader_id") if council_result.data else None
+
         # Fetch report
         report_result = (
             supabase.table("activity_reports")
@@ -222,7 +234,7 @@ async def get_report(
         )
 
         return _build_report_response(
-            report, year, receipts, receipt_items, attendance_result.data or []
+            report, year, receipts, receipt_items, attendance_result.data or [], leader_id
         )
     except HTTPException:
         raise
@@ -251,6 +263,16 @@ async def update_report(
     await _check_council_leader(str(user.id), str(council_id))
 
     try:
+        # Fetch council to get leader_id
+        council_result = (
+            supabase.table("councils")
+            .select("leader_id")
+            .eq("id", str(council_id))
+            .single()
+            .execute()
+        )
+        leader_id = council_result.data.get("leader_id") if council_result.data else None
+
         # Try to fetch existing report
         report_result = (
             supabase.table("activity_reports")
@@ -413,6 +435,7 @@ async def update_report(
             all_receipts,
             all_receipt_items,
             attendance_result.data or [],
+            leader_id,
         )
     except HTTPException:
         raise
@@ -668,6 +691,7 @@ async def submit_report(report_id: UUID, user: AuthenticatedUser):
             receipts,
             receipt_items,
             attendance_result.data or [],
+            council["leader_id"],
         )
     except HTTPException:
         raise
