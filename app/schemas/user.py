@@ -44,6 +44,7 @@ class UserPublicProfile(BaseModel):
 
     avatar_url: str | None = None
     email: str | None = None
+    phone_number: str | None = None
 
     affiliation: str | None = None
     major: str | None = None
@@ -55,6 +56,7 @@ class UserPublicProfile(BaseModel):
     hobbies: list[str] | None = None
 
     location: str | None = None
+    address: str | None = None
 
     class Config:
         from_attributes = True
@@ -68,6 +70,7 @@ class UserMyProfile(BaseModel):
     role: AppRole
 
     avatar_url: str | None = None
+    phone_number: str | None = None
 
     affiliation: str | None = None
     major: str | None = None
@@ -79,6 +82,7 @@ class UserMyProfile(BaseModel):
     hobbies: list[str] | None = None
 
     location: str | None = None
+    address: str | None = None
 
     class Config:
         from_attributes = True
@@ -104,6 +108,7 @@ class UserPrivacyUpdate(BaseModel):
 class UserProfileUpdate(BaseModel):
     avatar_url: str | None = None
     email: str | None = None
+    phone_number: str | None = None
 
     affiliation: str | None = None
     major: str | None = None
@@ -113,5 +118,6 @@ class UserProfileUpdate(BaseModel):
     hobbies: list[str] | None = None
 
     location: str | None = None
+    address: str | None = None
     latitude: float | None = None
     longitude: float | None = None
