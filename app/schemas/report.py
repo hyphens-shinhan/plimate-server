@@ -82,8 +82,26 @@ class ReportResponse(BaseModel):
     activity_date: date | None
     location: str | None
     is_submitted: bool
+    is_public: bool
     submitted_at: datetime
     receipts: list[ReceiptResponse]
     attendance: list[AttendanceResponse]
     content: str | None
     image_urls: list[str] | None
+
+
+class PublicAttendanceResponse(BaseModel):
+    """Attendance info for public feed - excludes confirmation status."""
+    name: str
+
+
+class PublicReportResponse(BaseModel):
+    """Report info for public feed - excludes receipts, includes council info."""
+    id: UUID
+    title: str
+    activity_date: date | None
+    location: str | None
+    content: str | None
+    image_urls: list[str] | None
+    attendance: list[PublicAttendanceResponse]
+    submitted_at: datetime

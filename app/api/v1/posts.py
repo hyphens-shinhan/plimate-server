@@ -26,6 +26,7 @@ from app.schemas.post import (
     FeedPostListResponse,
     EventPostListResponse,
 )
+from app.schemas.report import PublicReportResponse, PublicAttendanceResponse
 
 router = APIRouter(prefix="/posts", tags=["posts"])
 
@@ -854,6 +855,79 @@ async def update_event_post(
         supabase.table("posts").update(update_data).eq("id", str(post_id)).execute()
 
         return await get_event_post(post_id, user)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.get("/council", response_model=list[PublicReportResponse])
+async def get_public_reports_feed(
+    user: AuthenticatedUser,
+    limit: int = 20,
+    offset: int = 0,
+):
+    """
+    Get public reports for the feed.
+    Returns submitted reports marked as public, ordered by submission date.
+    Excludes receipts for privacy, includes attendance.
+    """
+    try:
+        # Fetch public, submitted reports with council info
+        reports_result = (
+            supabase.table("activity_reports")
+            .select("*, councils(id, affiliation, region, year)")
+            .eq("is_public", True)
+            .eq("is_submitted", True)
+            .order("submitted_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+
+        reports = reports_result.data or []
+
+        # Build response with attendance
+        result = []
+        for report in reports:
+            council = report.get("councils", {})
+            report_id = report["id"]
+
+            # Fetch attendance with user names - only PRESENT status
+            attendance_result = (
+                supabase.table("activity_attendance")
+                .select("*, users(name)")
+                .eq("report_id", report_id)
+                .eq("status", "PRESENT")
+                .execute()
+            )
+
+            attendance = [
+                PublicAttendanceResponse(
+                    name=(
+                        a.get("users", {}).get("name", "Unknown")
+                        if a.get("users")
+                        else "Unknown"
+                    ),
+                )
+                for a in (attendance_result.data or [])
+            ]
+
+            result.append(
+                PublicReportResponse(
+                    id=report["id"],
+                    title=report["title"],
+                    activity_date=report.get("activity_date"),
+                    location=report.get("location"),
+                    content=report.get("content"),
+                    image_urls=report.get("image_urls"),
+                    attendance=attendance,
+                    submitted_at=report["submitted_at"],
+                )
+            )
+
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)

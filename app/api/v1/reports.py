@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException, Path, status
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
+from app.core.notifications import create_notification
+from app.schemas.notification import NotificationType
 from app.schemas.report import (
     ReportUpdate,
     ReportResponse,
@@ -11,6 +13,8 @@ from app.schemas.report import (
     ReceiptItemResponse,
     AttendanceResponse,
     ConfirmationStatus,
+    PublicReportResponse,
+    PublicAttendanceResponse,
 )
 
 router = APIRouter(prefix="/reports", tags=["councils"])
@@ -133,6 +137,7 @@ def _build_report_response(
         activity_date=report["activity_date"],
         location=report["location"],
         is_submitted=report.get("is_submitted", False),
+        is_public=report.get("is_public", False),
         content=report.get("content"),
         image_urls=report.get("image_urls"),
         submitted_at=report["submitted_at"],
@@ -664,6 +669,96 @@ async def submit_report(report_id: UUID, user: AuthenticatedUser):
             receipt_items,
             attendance_result.data or [],
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.post("/{report_id}/toggle-visibility", response_model=dict)
+async def toggle_report_visibility(
+    report_id: UUID,
+    user: AuthenticatedUser,
+):
+    """
+    Toggle the public visibility of a submitted report.
+    Only the council leader can change visibility.
+    Report must be submitted before it can be made public.
+    """
+    try:
+        # Get report and council info
+        report_result = (
+            supabase.table("activity_reports")
+            .select("*, councils(id, leader_id)")
+            .eq("id", str(report_id))
+            .single()
+            .execute()
+        )
+
+        if not report_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found",
+            )
+
+        report = report_result.data
+        council = report.get("councils")
+
+        if not council:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Council not found",
+            )
+
+        # Check if user is the council leader
+        if str(council["leader_id"]) != str(user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the council leader can change report visibility",
+            )
+
+        # Report must be submitted before it can be made public
+        if not report.get("is_submitted", False):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Report must be submitted before it can be made public",
+            )
+
+        # Toggle is_public
+        new_is_public = not report.get("is_public", False)
+        update_result = (
+            supabase.table("activity_reports")
+            .update({"is_public": new_is_public})
+            .eq("id", str(report_id))
+            .execute()
+        )
+
+        if not update_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update report visibility",
+            )
+
+        # Send notifications to all council members when report is made public
+        if new_is_public:
+            council_id = council["id"]
+            members_result = (
+                supabase.table("council_members")
+                .select("user_id")
+                .eq("council_id", str(council_id))
+                .execute()
+            )
+            for member in (members_result.data or []):
+                create_notification(
+                    recipient_id=member["user_id"],
+                    notification_type=NotificationType.REPORT_EXPORT,
+                    message=f"Activity report '{report['title']}' has been shared",
+                    actor_id=user.id,
+                )
+
+        return {"is_public": new_is_public, "message": f"Report visibility set to {'public' if new_is_public else 'private'}"}
     except HTTPException:
         raise
     except Exception as e:

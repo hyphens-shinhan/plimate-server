@@ -12,6 +12,7 @@ class NotificationType(str, Enum):
     CHAT_MESSAGE = "CHAT_MESSAGE"
     FOLLOW_REQUEST = "FOLLOW_REQUEST"
     FOLLOW_ACCEPT = "FOLLOW_ACCEPT"
+    REPORT_EXPORT = "REPORT_EXPORT"
 
 
 class NotificationActor(BaseModel):
