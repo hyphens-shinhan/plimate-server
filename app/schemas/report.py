@@ -57,6 +57,8 @@ class ReceiptResponse(BaseModel):
 
 class AttendanceResponse(BaseModel):
     user_id: UUID
+    name: str
+    avatar_url: str | None = None
     status: AttendanceStatus
     confirmation: ConfirmationStatus
 
@@ -69,6 +71,7 @@ class ReportResponse(BaseModel):
     title: str
     activity_date: date | None
     location: str | None
+    is_submitted: bool
     submitted_at: datetime
     receipts: list[ReceiptResponse]
     attendance: list[AttendanceResponse]

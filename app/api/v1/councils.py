@@ -286,6 +286,16 @@ async def get_council_members(council_id: UUID, user: AuthenticatedUser):
                 detail="Only council members can view the member list",
             )
 
+        # Fetch council to get leader_id
+        council_result = (
+            supabase.table("councils")
+            .select("leader_id")
+            .eq("id", str(council_id))
+            .single()
+            .execute()
+        )
+        leader_id = council_result.data.get("leader_id") if council_result.data else None
+
         # Fetch all members with user info
         result = (
             supabase.table("council_members")
@@ -298,7 +308,10 @@ async def get_council_members(council_id: UUID, user: AuthenticatedUser):
         for row in result.data or []:
             user_data = row.get("users")
             if user_data:
-                members.append(CouncilMemberResponse(**user_data))
+                members.append(CouncilMemberResponse(
+                    **user_data,
+                    is_leader=(str(user_data["id"]) == str(leader_id)) if leader_id else False,
+                ))
 
         return members
     except HTTPException:

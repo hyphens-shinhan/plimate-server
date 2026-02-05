@@ -86,7 +86,7 @@ async def get_activities_summary(user: AuthenticatedUser):
         if council_ids:
             reports_result = (
                 supabase.table("activity_reports")
-                .select("council_id, month, title, councils(year)")
+                .select("council_id, month, title, is_submitted, councils(year)")
                 .in_("council_id", council_ids)
                 .execute()
             )
@@ -163,14 +163,17 @@ async def get_activities_summary(user: AuthenticatedUser):
             list(monitoring_years),
         )
 
-        # Build council reports lookup: {year: {month: title}}
-        council_by_year: dict[int, dict[int, str | None]] = {}
+        # Build council reports lookup: {year: {month: {title, is_submitted}}}
+        council_by_year: dict[int, dict[int, dict]] = {}
         for report in council_reports_data:
             year = report["councils"]["year"] if report.get("councils") else None
             if year:
                 if year not in council_by_year:
                     council_by_year[year] = {}
-                council_by_year[year][report["month"]] = report.get("title")
+                council_by_year[year][report["month"]] = {
+                    "title": report.get("title"),
+                    "is_submitted": report.get("is_submitted", False),
+                }
 
         # Build academic reports lookup: {year: set(months)} - only count submitted reports
         academic_by_year: dict[int, set[int]] = {}
@@ -192,6 +195,7 @@ async def get_activities_summary(user: AuthenticatedUser):
             # Build monthly status for all 12 months
             months = []
             for m in ALL_MONTHS:
+                council_report_data = council_data.get(m, {})
                 council_completed = m in council_data
                 academic_done = m in academic_completed
 
@@ -199,11 +203,12 @@ async def get_activities_summary(user: AuthenticatedUser):
                     MonthlyActivityStatus(
                         month=m,
                         council_report=CouncilReportStatus(
-                            title=council_data.get(m),
-                            is_completed=council_completed,
+                            title=council_report_data.get("title") if council_report_data else None,
+                            exists=council_completed,
+                            is_submitted=council_report_data.get("is_submitted", False) if council_report_data else False,
                         ),
                         academic_report=AcademicReportStatus(
-                            is_completed=academic_done,
+                            is_submitted=academic_done,
                         ),
                     )
                 )

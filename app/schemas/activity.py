@@ -8,11 +8,12 @@ from app.schemas.post import EventStatus
 
 class CouncilReportStatus(BaseModel):
     title: str | None = None
-    is_completed: bool
+    exists: bool
+    is_submitted: bool
 
 
 class AcademicReportStatus(BaseModel):
-    is_completed: bool
+    is_submitted: bool
 
 
 class MandatoryActivityStatus(BaseModel):

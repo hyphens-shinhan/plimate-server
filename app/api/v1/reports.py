@@ -13,7 +13,7 @@ from app.schemas.report import (
     ConfirmationStatus,
 )
 
-router = APIRouter(prefix="/reports", tags=["reports"])
+router = APIRouter(prefix="/reports", tags=["councils"])
 
 
 async def _get_council_and_validate_year(council_id: str, year: int) -> int:
@@ -132,6 +132,7 @@ def _build_report_response(
         title=report["title"],
         activity_date=report["activity_date"],
         location=report["location"],
+        is_submitted=report.get("is_submitted", False),
         content=report.get("content"),
         image_urls=report.get("image_urls"),
         submitted_at=report["submitted_at"],
@@ -139,6 +140,14 @@ def _build_report_response(
         attendance=[
             AttendanceResponse(
                 user_id=a["user_id"],
+                name=(
+                    a.get("users", {}).get("name", "Unknown")
+                    if a.get("users")
+                    else "Unknown"
+                ),
+                avatar_url=(
+                    a.get("users", {}).get("avatar_url") if a.get("users") else None
+                ),
                 status=a["status"],
                 confirmation=a["confirmation"],
             )
@@ -230,7 +239,6 @@ async def create_report(
                     all_receipt_items.extend(items_result.data or [])
 
         # Insert attendance records
-        attendance_data = []
         if report.attendance:
             attendance_rows = [
                 {
@@ -241,13 +249,22 @@ async def create_report(
                 for a in report.attendance
             ]
 
-            attendance_result = (
-                supabase.table("activity_attendance").insert(attendance_rows).execute()
-            )
-            attendance_data = attendance_result.data or []
+            supabase.table("activity_attendance").insert(attendance_rows).execute()
+
+        # Re-fetch attendance with user names
+        attendance_result = (
+            supabase.table("activity_attendance")
+            .select("*, users(name, avatar_url)")
+            .eq("report_id", report_id)
+            .execute()
+        )
 
         return _build_report_response(
-            new_report, year, all_receipts, all_receipt_items, attendance_data
+            new_report,
+            year,
+            all_receipts,
+            all_receipt_items,
+            attendance_result.data or [],
         )
     except HTTPException:
         raise
@@ -309,10 +326,10 @@ async def get_report(
             )
             receipt_items = items_result.data or []
 
-        # Fetch attendance
+        # Fetch attendance with user names
         attendance_result = (
             supabase.table("activity_attendance")
-            .select("*")
+            .select("*, users(name, avatar_url)")
             .eq("report_id", report_id)
             .execute()
         )
@@ -329,15 +346,37 @@ async def get_report(
 
 
 @router.patch(
-    "/council/{report_id}/attendance/confirm",
+    "/council/{report_id}/confirm",
     response_model=AttendanceResponse,
 )
 async def confirm_attendance(report_id: UUID, user: AuthenticatedUser):
     """
     Confirm the authenticated user's own attendance for a report.
     Members can only confirm their own attendance record.
+    Report must be submitted by the leader first.
     """
     try:
+        # Check if report is submitted
+        report_result = (
+            supabase.table("activity_reports")
+            .select("is_submitted")
+            .eq("id", str(report_id))
+            .single()
+            .execute()
+        )
+
+        if not report_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found",
+            )
+
+        if not report_result.data.get("is_submitted", False):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Report not yet submitted by leader",
+            )
+
         # Verify attendance record exists for this user
         existing = (
             supabase.table("activity_attendance")
@@ -369,8 +408,21 @@ async def confirm_attendance(report_id: UUID, user: AuthenticatedUser):
             )
 
         updated = result.data[0]
+
+        # Fetch user name and avatar
+        user_result = (
+            supabase.table("users")
+            .select("name, avatar_url")
+            .eq("id", str(user.id))
+            .single()
+            .execute()
+        )
+        user_data = user_result.data or {}
+
         return AttendanceResponse(
             user_id=updated["user_id"],
+            name=user_data.get("name", "Unknown"),
+            avatar_url=user_data.get("avatar_url"),
             status=updated["status"],
             confirmation=updated["confirmation"],
         )
@@ -383,7 +435,7 @@ async def confirm_attendance(report_id: UUID, user: AuthenticatedUser):
 
 
 @router.patch(
-    "/council/{report_id}/attendance/reject",
+    "/council/{report_id}/reject",
     response_model=AttendanceResponse,
 )
 async def reject_attendance(report_id: UUID, user: AuthenticatedUser):
@@ -424,10 +476,121 @@ async def reject_attendance(report_id: UUID, user: AuthenticatedUser):
             )
 
         updated = result.data[0]
+
+        # Fetch user name and avatar
+        user_result = (
+            supabase.table("users")
+            .select("name, avatar_url")
+            .eq("id", str(user.id))
+            .single()
+            .execute()
+        )
+        user_data = user_result.data or {}
+
         return AttendanceResponse(
             user_id=updated["user_id"],
+            name=user_data.get("name", "Unknown"),
+            avatar_url=user_data.get("avatar_url"),
             status=updated["status"],
             confirmation=updated["confirmation"],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.post("/council/{report_id}/submit", response_model=ReportResponse)
+async def submit_report(report_id: UUID, user: AuthenticatedUser):
+    """
+    Finalize and submit the report.
+    Only the council leader can submit the report.
+    """
+    try:
+        # Get report and council info
+        report_result = (
+            supabase.table("activity_reports")
+            .select("*, councils(id, year, leader_id)")
+            .eq("id", str(report_id))
+            .single()
+            .execute()
+        )
+
+        if not report_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found",
+            )
+
+        report = report_result.data
+        council = report.get("councils")
+
+        if not council:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Council not found",
+            )
+
+        # Check if user is the council leader
+        if str(council["leader_id"]) != str(user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the council leader can submit the report",
+            )
+
+        # Update is_submitted to true
+        update_result = (
+            supabase.table("activity_reports")
+            .update({"is_submitted": True})
+            .eq("id", str(report_id))
+            .execute()
+        )
+
+        if not update_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to submit report",
+            )
+
+        updated_report = update_result.data[0]
+
+        # Fetch receipts
+        receipts_result = (
+            supabase.table("receipts")
+            .select("*")
+            .eq("report_id", str(report_id))
+            .execute()
+        )
+        receipts = receipts_result.data or []
+
+        # Fetch receipt items
+        receipt_items = []
+        if receipts:
+            receipt_ids = [r["id"] for r in receipts]
+            items_result = (
+                supabase.table("receipt_items")
+                .select("*")
+                .in_("receipt_id", receipt_ids)
+                .execute()
+            )
+            receipt_items = items_result.data or []
+
+        # Fetch attendance with user names
+        attendance_result = (
+            supabase.table("activity_attendance")
+            .select("*, users(name, avatar_url)")
+            .eq("report_id", str(report_id))
+            .execute()
+        )
+
+        return _build_report_response(
+            updated_report,
+            council["year"],
+            receipts,
+            receipt_items,
+            attendance_result.data or [],
         )
     except HTTPException:
         raise

@@ -38,6 +38,7 @@ class CouncilMemberResponse(BaseModel):
     id: UUID
     name: str
     avatar_url: str | None
+    is_leader: bool = False
 
 
 class MonthActivityStatus(BaseModel):
