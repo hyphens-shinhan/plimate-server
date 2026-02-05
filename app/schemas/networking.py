@@ -23,6 +23,8 @@ class RecommendedUserCard(NetworkingUserCard):
 
 
 class FriendCard(NetworkingUserCard):
+    role: str | None = None
+    scholarship_batch: int | None = None
     connected_at: datetime
 
 

@@ -306,7 +306,7 @@ async def get_my_friends(
         supabase.table("follows")
         .select(
             "receiver_id, accepted_at, "
-            "users!follows_receiver_id_fkey(id, name, avatar_url, user_profiles(affiliation))"
+            "users!follows_receiver_id_fkey(id, name, avatar_url, role, user_profiles(affiliation, scholarship_batch))"
         )
         .eq("requester_id", str(user.id))
         .eq("status", "ACCEPTED")
@@ -318,7 +318,7 @@ async def get_my_friends(
         supabase.table("follows")
         .select(
             "requester_id, accepted_at, "
-            "users!follows_requester_id_fkey(id, name, avatar_url, user_profiles(affiliation))"
+            "users!follows_requester_id_fkey(id, name, avatar_url, role, user_profiles(affiliation, scholarship_batch))"
         )
         .eq("receiver_id", str(user.id))
         .eq("status", "ACCEPTED")
@@ -342,6 +342,8 @@ async def get_my_friends(
                     name=name,
                     avatar_url=user_data.get("avatar_url"),
                     affiliation=profile.get("affiliation"),
+                    role=user_data.get("role"),
+                    scholarship_batch=profile.get("scholarship_batch"),
                     connected_at=row["accepted_at"],
                 )
             )
@@ -361,6 +363,8 @@ async def get_my_friends(
                     name=name,
                     avatar_url=user_data.get("avatar_url"),
                     affiliation=profile.get("affiliation"),
+                    role=user_data.get("role"),
+                    scholarship_batch=profile.get("scholarship_batch"),
                     connected_at=row["accepted_at"],
                 )
             )
