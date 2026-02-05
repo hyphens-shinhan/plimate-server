@@ -1,0 +1,373 @@
+import math
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from app.core.database import supabase
+from app.core.deps import AuthenticatedUser
+from app.schemas.networking import (
+    FriendCard,
+    MyFriendsResponse,
+    NearbyUserCard,
+    NearbyUsersResponse,
+    RecommendationsResponse,
+    RecommendedUserCard,
+)
+
+router = APIRouter(prefix="/networking", tags=["networking"])
+
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate distance between two points in kilometers."""
+    R = 6371  # Earth's radius in km
+
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    return R * c
+
+
+def _get_blocked_user_ids(user_id: str) -> set[str]:
+    """Get all user IDs involved in blocks with current user."""
+    result = (
+        supabase.table("blocks")
+        .select("blocker_id, blocked_id")
+        .or_(f"blocker_id.eq.{user_id},blocked_id.eq.{user_id}")
+        .execute()
+    )
+
+    blocked_ids = set()
+    for block in result.data or []:
+        blocked_ids.add(block["blocker_id"])
+        blocked_ids.add(block["blocked_id"])
+    blocked_ids.discard(user_id)
+    return blocked_ids
+
+
+def _get_my_friend_ids(user_id: str) -> set[str]:
+    """Get all friend IDs (ACCEPTED follows in both directions)."""
+    as_requester = (
+        supabase.table("follows")
+        .select("receiver_id")
+        .eq("requester_id", user_id)
+        .eq("status", "ACCEPTED")
+        .execute()
+    )
+
+    as_receiver = (
+        supabase.table("follows")
+        .select("requester_id")
+        .eq("receiver_id", user_id)
+        .eq("status", "ACCEPTED")
+        .execute()
+    )
+
+    friend_ids = set()
+    for row in as_requester.data or []:
+        friend_ids.add(row["receiver_id"])
+    for row in as_receiver.data or []:
+        friend_ids.add(row["requester_id"])
+
+    return friend_ids
+
+
+@router.get("/nearby", response_model=NearbyUsersResponse)
+async def get_nearby_users(
+    user: AuthenticatedUser,
+    radius_km: float = Query(10.0, ge=1.0, le=100.0),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """Get users near current user's location for map display."""
+    # Get current user's location
+    my_profile = (
+        supabase.table("user_profiles")
+        .select("latitude, longitude")
+        .eq("user_id", str(user.id))
+        .single()
+        .execute()
+    )
+
+    if not my_profile.data or not my_profile.data.get("latitude"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your location is not set. Please update your profile.",
+        )
+
+    my_lat = my_profile.data["latitude"]
+    my_lng = my_profile.data["longitude"]
+
+    # Get blocked user IDs
+    blocked_ids = _get_blocked_user_ids(str(user.id))
+
+    # Get all users with public locations
+    users_result = (
+        supabase.table("user_profiles")
+        .select("user_id, latitude, longitude, affiliation, users(id, name, avatar_url)")
+        .eq("is_location_public", True)
+        .neq("user_id", str(user.id))
+        .not_.is_("latitude", "null")
+        .not_.is_("longitude", "null")
+        .execute()
+    )
+
+    # Calculate distances and filter
+    nearby_users = []
+    for row in users_result.data or []:
+        if row["user_id"] in blocked_ids:
+            continue
+
+        distance = haversine_distance(
+            my_lat, my_lng, row["latitude"], row["longitude"]
+        )
+
+        if distance <= radius_km:
+            user_data = row.get("users")
+            if user_data:
+                nearby_users.append(
+                    NearbyUserCard(
+                        id=user_data["id"],
+                        name=user_data["name"],
+                        avatar_url=user_data.get("avatar_url"),
+                        affiliation=row.get("affiliation"),
+                        latitude=row["latitude"],
+                        longitude=row["longitude"],
+                        distance_km=round(distance, 2),
+                    )
+                )
+
+    # Sort by distance and paginate
+    nearby_users.sort(key=lambda u: u.distance_km)
+    total = len(nearby_users)
+    nearby_users = nearby_users[offset : offset + limit]
+
+    return NearbyUsersResponse(
+        users=nearby_users,
+        total=total,
+        center_lat=my_lat,
+        center_lng=my_lng,
+        radius_km=radius_km,
+    )
+
+
+@router.get("/recommendations", response_model=RecommendationsResponse)
+async def get_friend_recommendations(
+    user: AuthenticatedUser,
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+):
+    """Get friend recommendations based on friends of friends, or random users if none."""
+    # Get my direct friends
+    my_friend_ids = _get_my_friend_ids(str(user.id))
+
+    # Get blocked user IDs
+    blocked_ids = _get_blocked_user_ids(str(user.id))
+
+    # Get friend names for mutual friends display
+    friend_names: dict[str, str] = {}
+    if my_friend_ids:
+        friends_result = (
+            supabase.table("users")
+            .select("id, name")
+            .in_("id", list(my_friend_ids))
+            .execute()
+        )
+        for f in friends_result.data or []:
+            friend_names[str(f["id"])] = f["name"]
+
+    # Find friends of friends
+    friends_of_friends: dict[str, set[str]] = {}  # candidate_id -> set of mutual friend names
+
+    for friend_id in my_friend_ids:
+        # Get this friend's friends as requester
+        fof_as_requester = (
+            supabase.table("follows")
+            .select("receiver_id")
+            .eq("requester_id", friend_id)
+            .eq("status", "ACCEPTED")
+            .execute()
+        )
+
+        # Get this friend's friends as receiver
+        fof_as_receiver = (
+            supabase.table("follows")
+            .select("requester_id")
+            .eq("receiver_id", friend_id)
+            .eq("status", "ACCEPTED")
+            .execute()
+        )
+
+        friend_name = friend_names.get(friend_id, "Unknown")
+
+        for row in fof_as_requester.data or []:
+            candidate_id = row["receiver_id"]
+            if (
+                candidate_id != str(user.id)
+                and candidate_id not in my_friend_ids
+                and candidate_id not in blocked_ids
+            ):
+                if candidate_id not in friends_of_friends:
+                    friends_of_friends[candidate_id] = set()
+                friends_of_friends[candidate_id].add(friend_name)
+
+        for row in fof_as_receiver.data or []:
+            candidate_id = row["requester_id"]
+            if (
+                candidate_id != str(user.id)
+                and candidate_id not in my_friend_ids
+                and candidate_id not in blocked_ids
+            ):
+                if candidate_id not in friends_of_friends:
+                    friends_of_friends[candidate_id] = set()
+                friends_of_friends[candidate_id].add(friend_name)
+
+    recommendations = []
+
+    if friends_of_friends:
+        # Get user details for candidates with mutual friends
+        candidate_ids = list(friends_of_friends.keys())
+        users_result = (
+            supabase.table("users")
+            .select("id, name, avatar_url, user_profiles(affiliation)")
+            .in_("id", candidate_ids)
+            .execute()
+        )
+
+        # Build recommendations from friends of friends
+        for row in users_result.data or []:
+            user_id = str(row["id"])
+            mutual_friends_set = friends_of_friends.get(user_id, set())
+            mutual_friends_list = list(mutual_friends_set)[:3]
+
+            profile = row.get("user_profiles") or {}
+            recommendations.append(
+                RecommendedUserCard(
+                    id=row["id"],
+                    name=row["name"],
+                    avatar_url=row.get("avatar_url"),
+                    affiliation=profile.get("affiliation"),
+                    mutual_friends_count=len(mutual_friends_set),
+                    mutual_friends=mutual_friends_list if mutual_friends_list else None,
+                )
+            )
+
+        # Sort by mutual friends count descending
+        recommendations.sort(key=lambda u: u.mutual_friends_count, reverse=True)
+    else:
+        # No mutual friends - return random users (excluding admins, self, friends, blocked)
+        exclude_ids = list(blocked_ids | my_friend_ids | {str(user.id)})
+
+        random_users_result = (
+            supabase.table("users")
+            .select("id, name, avatar_url, role, user_profiles(affiliation)")
+            .neq("role", "ADMIN")
+            .execute()
+        )
+
+        for row in random_users_result.data or []:
+            if str(row["id"]) in exclude_ids:
+                continue
+
+            profile = row.get("user_profiles") or {}
+            recommendations.append(
+                RecommendedUserCard(
+                    id=row["id"],
+                    name=row["name"],
+                    avatar_url=row.get("avatar_url"),
+                    affiliation=profile.get("affiliation"),
+                    mutual_friends_count=0,
+                    mutual_friends=None,
+                )
+            )
+
+    total = len(recommendations)
+    recommendations = recommendations[offset : offset + limit]
+
+    return RecommendationsResponse(users=recommendations, total=total)
+
+
+@router.get("/friends", response_model=MyFriendsResponse)
+async def get_my_friends(
+    user: AuthenticatedUser,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    search: str | None = Query(None),
+):
+    """Get current user's friends list."""
+    # Get friends where I am requester
+    friends_as_requester = (
+        supabase.table("follows")
+        .select(
+            "receiver_id, accepted_at, "
+            "users!follows_receiver_id_fkey(id, name, avatar_url, user_profiles(affiliation))"
+        )
+        .eq("requester_id", str(user.id))
+        .eq("status", "ACCEPTED")
+        .execute()
+    )
+
+    # Get friends where I am receiver
+    friends_as_receiver = (
+        supabase.table("follows")
+        .select(
+            "requester_id, accepted_at, "
+            "users!follows_requester_id_fkey(id, name, avatar_url, user_profiles(affiliation))"
+        )
+        .eq("receiver_id", str(user.id))
+        .eq("status", "ACCEPTED")
+        .execute()
+    )
+
+    friends = []
+
+    for row in friends_as_requester.data or []:
+        user_data = row.get("users")
+        if user_data:
+            profile = user_data.get("user_profiles") or {}
+            name = user_data["name"]
+
+            if search and search.lower() not in name.lower():
+                continue
+
+            friends.append(
+                FriendCard(
+                    id=user_data["id"],
+                    name=name,
+                    avatar_url=user_data.get("avatar_url"),
+                    affiliation=profile.get("affiliation"),
+                    connected_at=row["accepted_at"],
+                )
+            )
+
+    for row in friends_as_receiver.data or []:
+        user_data = row.get("users")
+        if user_data:
+            profile = user_data.get("user_profiles") or {}
+            name = user_data["name"]
+
+            if search and search.lower() not in name.lower():
+                continue
+
+            friends.append(
+                FriendCard(
+                    id=user_data["id"],
+                    name=name,
+                    avatar_url=user_data.get("avatar_url"),
+                    affiliation=profile.get("affiliation"),
+                    connected_at=row["accepted_at"],
+                )
+            )
+
+    # Sort by connected_at descending
+    friends.sort(key=lambda f: f.connected_at, reverse=True)
+    total = len(friends)
+    friends = friends[offset : offset + limit]
+
+    return MyFriendsResponse(friends=friends, total=total)

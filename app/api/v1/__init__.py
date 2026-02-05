@@ -14,6 +14,7 @@ from app.api.v1 import (
     academics,
     activities,
     mandatory,
+    networking,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -31,3 +32,4 @@ router.include_router(notifications.router)
 router.include_router(academics.router)
 router.include_router(activities.router)
 router.include_router(mandatory.router)
+router.include_router(networking.router)
