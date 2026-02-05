@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Path, status
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
 from app.schemas.report import (
-    ReportCreate,
+    ReportUpdate,
     ReportResponse,
     ReceiptResponse,
     ReceiptItemResponse,
@@ -156,124 +156,6 @@ def _build_report_response(
     )
 
 
-@router.post(
-    "/council/{council_id}/{year}/{month}",
-    response_model=ReportResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_report(
-    council_id: UUID,
-    year: int,
-    month: int = Path(..., ge=4, le=12),
-    *,
-    report: ReportCreate,
-    user: AuthenticatedUser,
-):
-    """
-    Submit an activity report for a council, year, and month.
-    Only the council leader can submit reports.
-    Includes receipts with line items and member attendance records.
-    """
-    await _get_council_and_validate_year(str(council_id), year)
-    await _check_council_leader(str(user.id), str(council_id))
-
-    try:
-        # Insert activity report
-        report_data = {
-            "council_id": str(council_id),
-            "month": month,
-            "title": report.title,
-            "activity_date": report.activity_date.isoformat(),
-            "location": report.location,
-            "content": report.content,
-            "image_urls": report.image_urls,
-        }
-
-        report_result = supabase.table("activity_reports").insert(report_data).execute()
-
-        if not report_result.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create report",
-            )
-
-        new_report = report_result.data[0]
-        report_id = new_report["id"]
-
-        # Insert receipts and their items
-        all_receipts = []
-        all_receipt_items = []
-        if report.receipts:
-            for receipt in report.receipts:
-                receipt_result = (
-                    supabase.table("receipts")
-                    .insert(
-                        {
-                            "report_id": report_id,
-                            "store_name": receipt.store_name,
-                            "image_url": receipt.image_url,
-                        }
-                    )
-                    .execute()
-                )
-
-                if not receipt_result.data:
-                    continue
-
-                new_receipt = receipt_result.data[0]
-                all_receipts.append(new_receipt)
-
-                if receipt.items:
-                    item_rows = [
-                        {
-                            "receipt_id": new_receipt["id"],
-                            "item_name": item.item_name,
-                            "price": item.price,
-                        }
-                        for item in receipt.items
-                    ]
-
-                    items_result = (
-                        supabase.table("receipt_items").insert(item_rows).execute()
-                    )
-                    all_receipt_items.extend(items_result.data or [])
-
-        # Insert attendance records
-        if report.attendance:
-            attendance_rows = [
-                {
-                    "report_id": report_id,
-                    "user_id": str(a.user_id),
-                    "status": a.status.value,
-                }
-                for a in report.attendance
-            ]
-
-            supabase.table("activity_attendance").insert(attendance_rows).execute()
-
-        # Re-fetch attendance with user names
-        attendance_result = (
-            supabase.table("activity_attendance")
-            .select("*, users(name, avatar_url)")
-            .eq("report_id", report_id)
-            .execute()
-        )
-
-        return _build_report_response(
-            new_report,
-            year,
-            all_receipts,
-            all_receipt_items,
-            attendance_result.data or [],
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
-        )
-
-
 @router.get("/council/{council_id}/{year}/{month}", response_model=ReportResponse)
 async def get_report(
     council_id: UUID,
@@ -336,6 +218,196 @@ async def get_report(
 
         return _build_report_response(
             report, year, receipts, receipt_items, attendance_result.data or []
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.patch("/council/{council_id}/{year}/{month}", response_model=ReportResponse)
+async def update_report(
+    council_id: UUID,
+    year: int,
+    month: int = Path(..., ge=4, le=12),
+    *,
+    report_update: ReportUpdate,
+    user: AuthenticatedUser,
+):
+    """
+    Create or update a draft activity report for a council, year, and month.
+    Only the council leader can create/update reports.
+    Cannot update already-submitted reports.
+    If the report doesn't exist, it will be created.
+    """
+    await _get_council_and_validate_year(str(council_id), year)
+    await _check_council_leader(str(user.id), str(council_id))
+
+    try:
+        # Try to fetch existing report
+        report_result = (
+            supabase.table("activity_reports")
+            .select("*")
+            .eq("council_id", str(council_id))
+            .eq("month", month)
+            .execute()
+        )
+
+        existing_report = report_result.data[0] if report_result.data else None
+        is_new_report = existing_report is None
+
+        if is_new_report:
+            # Create new report with provided data
+            report_data = {
+                "council_id": str(council_id),
+                "month": month,
+                "title": report_update.title or "",
+                "activity_date": report_update.activity_date.isoformat() if report_update.activity_date else None,
+                "location": report_update.location or "",
+                "content": report_update.content,
+                "image_urls": report_update.image_urls,
+            }
+            insert_result = supabase.table("activity_reports").insert(report_data).execute()
+
+            if not insert_result.data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create report",
+                )
+
+            updated_report = insert_result.data[0]
+            report_id = updated_report["id"]
+        else:
+            report_id = existing_report["id"]
+
+            # Prevent updates to submitted reports
+            if existing_report.get("is_submitted", False):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot update an already-submitted report",
+                )
+
+            # Build update data for report fields (only include non-None values)
+            update_data = {}
+            if report_update.title is not None:
+                update_data["title"] = report_update.title
+            if report_update.activity_date is not None:
+                update_data["activity_date"] = report_update.activity_date.isoformat()
+            if report_update.location is not None:
+                update_data["location"] = report_update.location
+            if report_update.content is not None:
+                update_data["content"] = report_update.content
+            if report_update.image_urls is not None:
+                update_data["image_urls"] = report_update.image_urls
+
+            # Update report if there are changes
+            if update_data:
+                update_result = (
+                    supabase.table("activity_reports")
+                    .update(update_data)
+                    .eq("id", report_id)
+                    .execute()
+                )
+                updated_report = update_result.data[0] if update_result.data else existing_report
+            else:
+                updated_report = existing_report
+
+        # Handle receipts update (replace all if provided)
+        all_receipts = []
+        all_receipt_items = []
+        if report_update.receipts is not None:
+            # Delete existing receipts and their items
+            existing_receipts = (
+                supabase.table("receipts")
+                .select("id")
+                .eq("report_id", report_id)
+                .execute()
+            )
+            if existing_receipts.data:
+                receipt_ids = [r["id"] for r in existing_receipts.data]
+                supabase.table("receipt_items").delete().in_("receipt_id", receipt_ids).execute()
+                supabase.table("receipts").delete().eq("report_id", report_id).execute()
+
+            # Insert new receipts
+            for receipt in report_update.receipts:
+                receipt_result = (
+                    supabase.table("receipts")
+                    .insert(
+                        {
+                            "report_id": report_id,
+                            "store_name": receipt.store_name,
+                            "image_url": receipt.image_url,
+                        }
+                    )
+                    .execute()
+                )
+
+                if receipt_result.data:
+                    new_receipt = receipt_result.data[0]
+                    all_receipts.append(new_receipt)
+
+                    if receipt.items:
+                        item_rows = [
+                            {
+                                "receipt_id": new_receipt["id"],
+                                "item_name": item.item_name,
+                                "price": item.price,
+                            }
+                            for item in receipt.items
+                        ]
+                        items_result = (
+                            supabase.table("receipt_items").insert(item_rows).execute()
+                        )
+                        all_receipt_items.extend(items_result.data or [])
+        else:
+            # Fetch existing receipts
+            receipts_result = (
+                supabase.table("receipts").select("*").eq("report_id", report_id).execute()
+            )
+            all_receipts = receipts_result.data or []
+            if all_receipts:
+                receipt_ids = [r["id"] for r in all_receipts]
+                items_result = (
+                    supabase.table("receipt_items")
+                    .select("*")
+                    .in_("receipt_id", receipt_ids)
+                    .execute()
+                )
+                all_receipt_items = items_result.data or []
+
+        # Handle attendance update (replace all if provided)
+        if report_update.attendance is not None:
+            # Delete existing attendance
+            supabase.table("activity_attendance").delete().eq("report_id", report_id).execute()
+
+            # Insert new attendance
+            if report_update.attendance:
+                attendance_rows = [
+                    {
+                        "report_id": report_id,
+                        "user_id": str(a.user_id),
+                        "status": a.status.value,
+                    }
+                    for a in report_update.attendance
+                ]
+                supabase.table("activity_attendance").insert(attendance_rows).execute()
+
+        # Fetch attendance with user names
+        attendance_result = (
+            supabase.table("activity_attendance")
+            .select("*, users(name, avatar_url)")
+            .eq("report_id", report_id)
+            .execute()
+        )
+
+        return _build_report_response(
+            updated_report,
+            year,
+            all_receipts,
+            all_receipt_items,
+            attendance_result.data or [],
         )
     except HTTPException:
         raise

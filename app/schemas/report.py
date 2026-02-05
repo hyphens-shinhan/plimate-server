@@ -41,6 +41,16 @@ class ReportCreate(BaseModel):
     attendance: list[AttendanceItem] | None = None
 
 
+class ReportUpdate(BaseModel):
+    title: str | None = None
+    activity_date: date | None = None
+    location: str | None = None
+    content: str | None = None
+    image_urls: list[str] | None = None
+    receipts: list[ReceiptCreate] | None = None
+    attendance: list[AttendanceItem] | None = None
+
+
 class ReceiptItemResponse(BaseModel):
     id: UUID
     item_name: str
