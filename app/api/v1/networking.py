@@ -170,20 +170,23 @@ async def get_friend_recommendations(
     # Get blocked user IDs
     blocked_ids = _get_blocked_user_ids(str(user.id))
 
-    # Get friend names for mutual friends display
-    friend_names: dict[str, str] = {}
+    # Get friend names and avatars for mutual friends display
+    friend_info: dict[str, dict] = {}  # friend_id -> {name, avatar_url}
     if my_friend_ids:
         friends_result = (
             supabase.table("users")
-            .select("id, name")
+            .select("id, name, avatar_url")
             .in_("id", list(my_friend_ids))
             .execute()
         )
         for f in friends_result.data or []:
-            friend_names[str(f["id"])] = f["name"]
+            friend_info[str(f["id"])] = {
+                "name": f["name"],
+                "avatar_url": f.get("avatar_url"),
+            }
 
     # Find friends of friends
-    friends_of_friends: dict[str, set[str]] = {}  # candidate_id -> set of mutual friend names
+    friends_of_friends: dict[str, set[str]] = {}  # candidate_id -> set of mutual friend IDs
 
     for friend_id in my_friend_ids:
         # Get this friend's friends as requester
@@ -204,8 +207,6 @@ async def get_friend_recommendations(
             .execute()
         )
 
-        friend_name = friend_names.get(friend_id, "Unknown")
-
         for row in fof_as_requester.data or []:
             candidate_id = row["receiver_id"]
             if (
@@ -215,7 +216,7 @@ async def get_friend_recommendations(
             ):
                 if candidate_id not in friends_of_friends:
                     friends_of_friends[candidate_id] = set()
-                friends_of_friends[candidate_id].add(friend_name)
+                friends_of_friends[candidate_id].add(friend_id)
 
         for row in fof_as_receiver.data or []:
             candidate_id = row["requester_id"]
@@ -226,7 +227,7 @@ async def get_friend_recommendations(
             ):
                 if candidate_id not in friends_of_friends:
                     friends_of_friends[candidate_id] = set()
-                friends_of_friends[candidate_id].add(friend_name)
+                friends_of_friends[candidate_id].add(friend_id)
 
     recommendations = []
 
@@ -243,8 +244,11 @@ async def get_friend_recommendations(
         # Build recommendations from friends of friends
         for row in users_result.data or []:
             user_id = str(row["id"])
-            mutual_friends_set = friends_of_friends.get(user_id, set())
-            mutual_friends_list = list(mutual_friends_set)[:3]
+            mutual_friend_ids = list(friends_of_friends.get(user_id, set()))[:3]
+            mutual_friends_list = [friend_info.get(fid, {}).get("name", "Unknown") for fid in mutual_friend_ids]
+            mutual_friends_avatars = [friend_info.get(fid, {}).get("avatar_url") for fid in mutual_friend_ids]
+            # Filter out None avatars
+            mutual_friends_avatars = [a for a in mutual_friends_avatars if a]
 
             profile = row.get("user_profiles") or {}
             recommendations.append(
@@ -253,8 +257,9 @@ async def get_friend_recommendations(
                     name=row["name"],
                     avatar_url=row.get("avatar_url"),
                     affiliation=profile.get("affiliation"),
-                    mutual_friends_count=len(mutual_friends_set),
+                    mutual_friends_count=len(friends_of_friends.get(user_id, set())),
                     mutual_friends=mutual_friends_list if mutual_friends_list else None,
+                    mutual_friends_avatars=mutual_friends_avatars if mutual_friends_avatars else None,
                 )
             )
 
@@ -284,6 +289,7 @@ async def get_friend_recommendations(
                     affiliation=profile.get("affiliation"),
                     mutual_friends_count=0,
                     mutual_friends=None,
+                    mutual_friends_avatars=None,
                 )
             )
 
@@ -332,6 +338,7 @@ async def get_my_friends(
         if user_data:
             profile = user_data.get("user_profiles") or {}
             name = user_data["name"]
+            friend_id = str(user_data["id"])
 
             if search and search.lower() not in name.lower():
                 continue
@@ -353,6 +360,7 @@ async def get_my_friends(
         if user_data:
             profile = user_data.get("user_profiles") or {}
             name = user_data["name"]
+            friend_id = str(user_data["id"])
 
             if search and search.lower() not in name.lower():
                 continue
