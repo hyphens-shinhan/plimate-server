@@ -1,7 +1,7 @@
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AppRole(str, Enum):
@@ -84,6 +84,8 @@ class UserMyProfile(BaseModel):
     location: str | None = None
     address: str | None = None
 
+    volunteer_hours: int = 0
+
     class Config:
         from_attributes = True
 
@@ -121,3 +123,18 @@ class UserProfileUpdate(BaseModel):
     address: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+
+    volunteer_hours: int | None = Field(None, ge=0, le=10000)
+
+
+class VolunteerHoursResponse(BaseModel):
+    """Schema for volunteer hours response."""
+    volunteer_hours: int
+
+    class Config:
+        from_attributes = True
+
+
+class VolunteerHoursUpdate(BaseModel):
+    """Schema for updating volunteer hours."""
+    volunteer_hours: int = Field(..., ge=0, le=10000, description="Total volunteer hours")

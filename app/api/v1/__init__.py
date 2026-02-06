@@ -15,6 +15,7 @@ from app.api.v1 import (
     activities,
     mandatory,
     networking,
+    grades,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -33,3 +34,4 @@ router.include_router(academics.router)
 router.include_router(activities.router)
 router.include_router(mandatory.router)
 router.include_router(networking.router)
+router.include_router(grades.router)

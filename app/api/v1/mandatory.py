@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Body, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser

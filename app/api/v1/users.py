@@ -9,6 +9,8 @@ from app.schemas.user import (
     UserPublicProfile,
     UserPrivacySettings,
     UserPrivacyUpdate,
+    VolunteerHoursResponse,
+    VolunteerHoursUpdate,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -77,6 +79,7 @@ async def get_current_user_my_profile(user: AuthenticatedUser):
             hobbies=profile.get("hobbies"),
             location=profile.get("location"),
             address=profile.get("address"),
+            volunteer_hours=profile.get("volunteer_hours", 0),
         )
     except Exception as e:
         raise HTTPException(
@@ -196,3 +199,46 @@ async def get_user_public_profile(user_id: str, user: AuthenticatedUser):
         location=profile.get("location") if is_location_public else None,
         address=profile.get("address") if is_location_public else None,
     )
+
+
+@router.get("/me/volunteer", response_model=VolunteerHoursResponse)
+async def get_my_volunteer_hours(user: AuthenticatedUser):
+    """Get current user's volunteer hours."""
+    try:
+        result = (
+            supabase.table("user_profiles")
+            .select("volunteer_hours")
+            .eq("user_id", str(user.id))
+            .single()
+            .execute()
+        )
+
+        if not result.data:
+            return VolunteerHoursResponse(volunteer_hours=0)
+
+        return VolunteerHoursResponse(**result.data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.patch("/me/volunteer", response_model=VolunteerHoursResponse)
+async def update_my_volunteer_hours(
+    update: VolunteerHoursUpdate, user: AuthenticatedUser
+):
+    """Update current user's volunteer hours."""
+    try:
+        # Upsert into user_profiles
+        supabase.table("user_profiles").upsert(
+            {
+                "user_id": str(user.id),
+                "volunteer_hours": update.volunteer_hours,
+            }
+        ).execute()
+
+        return VolunteerHoursResponse(volunteer_hours=update.volunteer_hours)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
