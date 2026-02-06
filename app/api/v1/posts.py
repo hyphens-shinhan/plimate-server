@@ -211,6 +211,77 @@ async def get_my_posts(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
 
+
+@router.get("/user/{user_id}", response_model=MyPostsResponse)
+async def get_user_public_posts(
+    user_id: UUID,
+    user: AuthenticatedUser,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Get public posts written by a specific user (for public profile view).
+    Excludes anonymous posts.
+    Includes:
+    - Feed posts that are not anonymous
+    - Council report posts authored by the user
+    """
+    try:
+        # Get user's non-anonymous feed and council report posts
+        result = (
+            supabase.table("posts")
+            .select("id, type, created_at, title, content, image_urls, like_count, comment_count, is_anonymous")
+            .eq("author_id", str(user_id))
+            .in_("type", [PostType.FEED.value, PostType.COUNCIL_REPORT.value])
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+
+        # Filter out anonymous posts on the application level
+        # (Council reports are never anonymous, but feed posts can be)
+        filtered_data = [
+            row for row in (result.data or [])
+            if row["type"] == PostType.COUNCIL_REPORT.value or not row.get("is_anonymous", False)
+        ]
+
+        # Get total count (excluding anonymous)
+        count_result = (
+            supabase.table("posts")
+            .select("id, type, is_anonymous")
+            .eq("author_id", str(user_id))
+            .in_("type", [PostType.FEED.value, PostType.COUNCIL_REPORT.value])
+            .execute()
+        )
+        total_count = sum(
+            1 for row in (count_result.data or [])
+            if row["type"] == PostType.COUNCIL_REPORT.value or not row.get("is_anonymous", False)
+        )
+
+        posts = []
+        for row in filtered_data:
+            post_type = MyPostItemType.FEED if row["type"] == "FEED" else MyPostItemType.COUNCIL_REPORT
+            posts.append(
+                MyPostItem(
+                    id=row["id"],
+                    type=post_type,
+                    created_at=row["created_at"],
+                    title=row.get("title"),
+                    content=row.get("content"),
+                    image_urls=row.get("image_urls"),
+                    like_count=row.get("like_count", 0),
+                    comment_count=row.get("comment_count", 0),
+                )
+            )
+
+        return MyPostsResponse(posts=posts, total=total_count)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
 @router.get("/feed", response_model=FeedPostListResponse)
 async def get_feed_posts(
     user: AuthenticatedUser,
