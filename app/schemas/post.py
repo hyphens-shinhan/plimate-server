@@ -189,3 +189,25 @@ class NoticePostListResponse(BaseModel):
 class EventPostListResponse(BaseModel):
     posts: list[EventPostResponse]
     total: int
+
+
+class MyPostItemType(str, Enum):
+    FEED = "FEED"
+    COUNCIL_REPORT = "COUNCIL_REPORT"
+
+
+class MyPostItem(BaseModel):
+    """Represents a post item in the user's posts list."""
+    id: UUID
+    type: MyPostItemType
+    created_at: datetime
+    content: str | None = None
+    title: str | None = None
+    image_urls: list[str] | None = None
+    like_count: int = 0
+    comment_count: int = 0
+
+
+class MyPostsResponse(BaseModel):
+    posts: list[MyPostItem]
+    total: int

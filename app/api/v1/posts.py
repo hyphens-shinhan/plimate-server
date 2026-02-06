@@ -25,6 +25,9 @@ from app.schemas.post import (
     NoticePostListResponse,
     FeedPostListResponse,
     EventPostListResponse,
+    MyPostItem,
+    MyPostItemType,
+    MyPostsResponse,
 )
 from app.schemas.report import PublicReportResponse, PublicAttendanceResponse
 
@@ -150,6 +153,91 @@ async def create_feed_post(post: FeedPostCreate, user: AuthenticatedUser):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
 
+
+@router.get("/me", response_model=MyPostsResponse)
+async def get_my_posts(
+    user: AuthenticatedUser,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Get posts written by the current user.
+    Includes:
+    - Feed posts authored by the user
+    - Public council reports where the user is the council leader (YB_LEADER)
+    """
+    try:
+        all_posts: list[MyPostItem] = []
+
+        # 1. Get user's feed posts
+        feed_result = (
+            supabase.table("posts")
+            .select("id, created_at, content, image_urls, like_count, comment_count")
+            .eq("author_id", str(user.id))
+            .eq("type", PostType.FEED.value)
+            .execute()
+        )
+
+        for row in feed_result.data or []:
+            all_posts.append(
+                MyPostItem(
+                    id=row["id"],
+                    type=MyPostItemType.FEED,
+                    created_at=row["created_at"],
+                    content=row.get("content"),
+                    image_urls=row.get("image_urls"),
+                    like_count=row.get("like_count", 0),
+                    comment_count=row.get("comment_count", 0),
+                )
+            )
+
+        # 2. Get councils where user is the leader
+        councils_result = (
+            supabase.table("councils")
+            .select("id")
+            .eq("leader_id", str(user.id))
+            .execute()
+        )
+
+        council_ids = [c["id"] for c in (councils_result.data or [])]
+
+        # 3. Get public reports for those councils
+        if council_ids:
+            reports_result = (
+                supabase.table("activity_reports")
+                .select("id, title, content, image_urls, submitted_at")
+                .in_("council_id", council_ids)
+                .eq("is_public", True)
+                .eq("is_submitted", True)
+                .execute()
+            )
+
+            for report in reports_result.data or []:
+                all_posts.append(
+                    MyPostItem(
+                        id=report["id"],
+                        type=MyPostItemType.COUNCIL_REPORT,
+                        created_at=report["submitted_at"],
+                        title=report.get("title"),
+                        content=report.get("content"),
+                        image_urls=report.get("image_urls"),
+                        like_count=0,
+                        comment_count=0,
+                    )
+                )
+
+        # Sort by created_at descending
+        all_posts.sort(key=lambda p: p.created_at, reverse=True)
+        total = len(all_posts)
+        all_posts = all_posts[offset : offset + limit]
+
+        return MyPostsResponse(posts=all_posts, total=total)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
 
 @router.get("/feed", response_model=FeedPostListResponse)
 async def get_feed_posts(
