@@ -55,7 +55,6 @@ class UserPublicProfile(BaseModel):
     interests: list[str] | None = None
     hobbies: list[str] | None = None
 
-    location: str | None = None
     address: str | None = None
 
     class Config:
@@ -81,7 +80,6 @@ class UserMyProfile(BaseModel):
     interests: list[str] | None = None
     hobbies: list[str] | None = None
 
-    location: str | None = None
     address: str | None = None
 
     volunteer_hours: int = 0
@@ -109,7 +107,6 @@ class UserPrivacyUpdate(BaseModel):
 
 class UserProfileUpdate(BaseModel):
     avatar_url: str | None = None
-    email: str | None = None
     phone_number: str | None = None
 
     affiliation: str | None = None
@@ -119,7 +116,6 @@ class UserProfileUpdate(BaseModel):
     interests: list[str] | None = None
     hobbies: list[str] | None = None
 
-    location: str | None = None
     address: str | None = None
     latitude: float | None = None
     longitude: float | None = None

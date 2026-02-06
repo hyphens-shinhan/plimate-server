@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.schemas.post import PostAuthor
+
 
 class AttendanceStatus(str, Enum):
     PRESENT = "PRESENT"
@@ -98,7 +100,8 @@ class PublicAttendanceResponse(BaseModel):
 
 class PublicReportResponse(BaseModel):
     """Report info for public feed - excludes receipts, includes council info."""
-    id: UUID
+    id: UUID  # This is the post_id - primary identifier for all interactions
+    report_id: UUID  # Original activity report ID for admin operations
     title: str
     activity_date: date | None
     location: str | None
@@ -106,3 +109,9 @@ class PublicReportResponse(BaseModel):
     image_urls: list[str] | None
     attendance: list[PublicAttendanceResponse]
     submitted_at: datetime
+    author: PostAuthor | None = None
+    like_count: int = 0
+    comment_count: int = 0
+    scrap_count: int = 0
+    is_liked: bool = False
+    is_scrapped: bool = False

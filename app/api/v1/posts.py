@@ -933,10 +933,10 @@ async def get_public_reports_feed(
     Excludes receipts for privacy, includes attendance.
     """
     try:
-        # Fetch public, submitted reports with council info
+        # Fetch public, submitted reports with council info and leader
         reports_result = (
             supabase.table("activity_reports")
-            .select("*, councils(id, affiliation, region, year)")
+            .select("*, councils(id, affiliation, region, year, leader_id, users!councils_leader_id_fkey(id, name, avatar_url))")
             .eq("is_public", True)
             .eq("is_submitted", True)
             .order("submitted_at", desc=True)
@@ -945,11 +945,42 @@ async def get_public_reports_feed(
         )
 
         reports = reports_result.data or []
+        report_ids = [r["id"] for r in reports]
+
+        # Fetch all associated posts for these reports
+        posts_result = (
+            supabase.table("posts")
+            .select("id, report_id, like_count, comment_count, scrap_count")
+            .in_("report_id", report_ids)
+            .execute()
+        ) if report_ids else None
+
+        # Map report_id to post data
+        report_to_post = {}
+        if posts_result and posts_result.data:
+            for p in posts_result.data:
+                report_to_post[p["report_id"]] = p
+
+        # Fetch user interactions
+        post_ids = [p["id"] for p in (posts_result.data or [])] if posts_result else []
+        liked_post_ids = set()
+        scrapped_post_ids = set()
+        if post_ids:
+            interactions = (
+                supabase.table("post_interactions")
+                .select("post_id, type")
+                .eq("user_id", str(user.id))
+                .in_("post_id", post_ids)
+                .execute()
+            )
+            liked_post_ids = {row["post_id"] for row in interactions.data if row["type"] == "LIKE"}
+            scrapped_post_ids = {row["post_id"] for row in interactions.data if row["type"] == "SCRAP"}
 
         # Build response with attendance
         result = []
         for report in reports:
-            council = report.get("councils", {})
+            council = report.get("councils", {}) or {}
+            leader = council.get("users", {}) or {}
             report_id = report["id"]
 
             # Fetch attendance with user names - only PRESENT status
@@ -972,9 +1003,28 @@ async def get_public_reports_feed(
                 for a in (attendance_result.data or [])
             ]
 
+            # Build author object if leader exists
+            author = None
+            if leader.get("id"):
+                author = PostAuthor(
+                    id=leader["id"],
+                    name=leader.get("name", "Unknown"),
+                    avatar_url=leader.get("avatar_url"),
+                    is_following=False,  # Can be computed if needed
+                )
+
+            # Get post data for this report
+            post_data = report_to_post.get(report_id, {})
+            post_id = post_data.get("id")
+
+            # Skip reports without an associated post (shouldn't happen for public reports)
+            if not post_id:
+                continue
+
             result.append(
                 PublicReportResponse(
-                    id=report["id"],
+                    id=post_id,  # Primary ID for all interactions
+                    report_id=report["id"],  # Original report ID for admin ops
                     title=report["title"],
                     activity_date=report.get("activity_date"),
                     location=report.get("location"),
@@ -982,6 +1032,12 @@ async def get_public_reports_feed(
                     image_urls=report.get("image_urls"),
                     attendance=attendance,
                     submitted_at=report["submitted_at"],
+                    author=author,
+                    like_count=post_data.get("like_count") or 0,
+                    comment_count=post_data.get("comment_count") or 0,
+                    scrap_count=post_data.get("scrap_count") or 0,
+                    is_liked=post_id in liked_post_ids if post_id else False,
+                    is_scrapped=post_id in scrapped_post_ids if post_id else False,
                 )
             )
 
@@ -992,6 +1048,125 @@ async def get_public_reports_feed(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
+
+
+@router.get("/council/{post_id}", response_model=PublicReportResponse)
+async def get_council_report_detail(
+    post_id: UUID,
+    user: AuthenticatedUser,
+):
+    """
+    Get a single public council report by its post ID.
+    Returns the report with author, attendance, counts, and user interaction state.
+    """
+    try:
+        # First fetch the post to get report_id and counts
+        post_result = (
+            supabase.table("posts")
+            .select("id, report_id, like_count, comment_count, scrap_count, author_id")
+            .eq("id", str(post_id))
+            .eq("type", PostType.COUNCIL_REPORT.value)
+            .maybe_single()
+            .execute()
+        )
+
+        post_data = (post_result.data if post_result else None) or {}
+        report_id = post_data.get("report_id")
+
+        if not report_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Council report not found",
+            )
+
+        # Fetch the report with council info and leader
+        report_result = (
+            supabase.table("activity_reports")
+            .select("*, councils(id, affiliation, region, year, leader_id, users!councils_leader_id_fkey(id, name, avatar_url))")
+            .eq("id", str(report_id))
+            .eq("is_public", True)
+            .eq("is_submitted", True)
+            .single()
+            .execute()
+        )
+
+        if not report_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found or not public",
+            )
+
+        report = report_result.data
+        council = report.get("councils", {}) or {}
+        leader = council.get("users", {}) or {}
+
+        # Fetch attendance with user names - only PRESENT status
+        attendance_result = (
+            supabase.table("activity_attendance")
+            .select("*, users(name)")
+            .eq("report_id", str(report_id))
+            .eq("status", "PRESENT")
+            .execute()
+        )
+
+        attendance = [
+            PublicAttendanceResponse(
+                name=(
+                    a.get("users", {}).get("name", "Unknown")
+                    if a.get("users")
+                    else "Unknown"
+                ),
+            )
+            for a in (attendance_result.data or [])
+        ]
+
+        # Build author object if leader exists
+        author = None
+        if leader.get("id"):
+            author = PostAuthor(
+                id=leader["id"],
+                name=leader.get("name", "Unknown"),
+                avatar_url=leader.get("avatar_url"),
+                is_following=False,
+            )
+
+        # Fetch user interactions
+        is_liked = False
+        is_scrapped = False
+        interactions = (
+            supabase.table("post_interactions")
+            .select("type")
+            .eq("user_id", str(user.id))
+            .eq("post_id", str(post_id))
+            .execute()
+        )
+        is_liked = any(i["type"] == "LIKE" for i in (interactions.data or []))
+        is_scrapped = any(i["type"] == "SCRAP" for i in (interactions.data or []))
+
+        return PublicReportResponse(
+            id=post_id,  # Primary ID for all interactions
+            report_id=report["id"],  # Original report ID for admin ops
+            title=report["title"],
+            activity_date=report.get("activity_date"),
+            location=report.get("location"),
+            content=report.get("content"),
+            image_urls=report.get("image_urls"),
+            attendance=attendance,
+            submitted_at=report["submitted_at"],
+            author=author,
+            like_count=post_data.get("like_count") or 0,
+            comment_count=post_data.get("comment_count") or 0,
+            scrap_count=post_data.get("scrap_count") or 0,
+            is_liked=is_liked,
+            is_scrapped=is_scrapped,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
 
 
 @router.delete("/{post_id}", status_code=status.HTTP_200_OK)
@@ -1095,7 +1270,7 @@ async def toggle_scrap(post_id: UUID, user: AuthenticatedUser):
         if not post.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
-        if post.data["type"] != PostType.FEED.value:
+        if post.data["type"] not in [PostType.FEED.value, PostType.COUNCIL_REPORT.value]:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
         existing = (
@@ -1111,7 +1286,7 @@ async def toggle_scrap(post_id: UUID, user: AuthenticatedUser):
             supabase.table("post_interactions").delete().eq("user_id", str(user.id)).eq(
                 "post_id", str(post_id)
             ).eq("type", "SCRAP").execute()
-            new_count = max(0, post.data["scrap_count"] - 1)
+            new_count = max(0, (post.data["scrap_count"] or 0) - 1)
             supabase.table("posts").update({"scrap_count": new_count}).eq(
                 "id", str(post_id)
             ).execute()
@@ -1126,7 +1301,7 @@ async def toggle_scrap(post_id: UUID, user: AuthenticatedUser):
                 }
             ).execute()
 
-        new_count = post.data["scrap_count"] + 1
+        new_count = (post.data["scrap_count"] or 0) + 1
         supabase.table("posts").update({"scrap_count": new_count}).eq(
             "id", str(post_id)
         ).execute()

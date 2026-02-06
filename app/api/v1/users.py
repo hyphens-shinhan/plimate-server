@@ -77,7 +77,6 @@ async def get_current_user_my_profile(user: AuthenticatedUser):
             bio=profile.get("bio"),
             interests=profile.get("interests"),
             hobbies=profile.get("hobbies"),
-            location=profile.get("location"),
             address=profile.get("address"),
             volunteer_hours=profile.get("volunteer_hours", 0),
         )
@@ -163,7 +162,7 @@ async def get_user_public_profile(user_id: str, user: AuthenticatedUser):
     result = (
         supabase.table("users_with_email")
         .select(
-            "id, name, avatar_url, role, email, user_profiles(affiliation, major, scholarship_type, scholarship_batch, bio, interests, hobbies, location, address, phone_number, is_location_public, is_scholarship_public, is_contact_public)"
+            "id, name, avatar_url, role, email, user_profiles(affiliation, major, scholarship_type, scholarship_batch, bio, interests, hobbies, address, phone_number, is_location_public, is_scholarship_public, is_contact_public)"
         )
         .eq("id", user_id)
         .single()
@@ -196,7 +195,6 @@ async def get_user_public_profile(user_id: str, user: AuthenticatedUser):
         bio=profile.get("bio"),
         interests=profile.get("interests"),
         hobbies=profile.get("hobbies"),
-        location=profile.get("location") if is_location_public else None,
         address=profile.get("address") if is_location_public else None,
     )
 
