@@ -711,6 +711,7 @@ async def toggle_report_visibility(
     Toggle the public visibility of a submitted report.
     Only the council leader can change visibility.
     Report must be submitted before it can be made public.
+    When made public, creates a post entry to enable likes/comments/saves.
     """
     try:
         # Get report and council info
@@ -718,11 +719,11 @@ async def toggle_report_visibility(
             supabase.table("activity_reports")
             .select("*, councils(id, leader_id)")
             .eq("id", str(report_id))
-            .single()
+            .maybe_single()
             .execute()
         )
 
-        if not report_result.data:
+        if not report_result or not report_result.data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Report not found",
@@ -766,8 +767,29 @@ async def toggle_report_visibility(
                 detail="Failed to update report visibility",
             )
 
-        # Send notifications to all council members when report is made public
+        # Create or delete post entry based on visibility
         if new_is_public:
+            # Create a post entry for the council report
+            post_result = (
+                supabase.table("posts")
+                .insert({
+                    "author_id": str(council["leader_id"]),
+                    "type": "COUNCIL_REPORT",
+                    "title": report.get("title"),
+                    "content": report.get("content"),
+                    "image_urls": report.get("image_urls"),
+                    "report_id": str(report_id),
+                })
+                .execute()
+            )
+
+            if not post_result.data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create post for council report",
+                )
+
+            # Send notifications to all council members
             council_id = council["id"]
             members_result = (
                 supabase.table("council_members")
@@ -782,6 +804,9 @@ async def toggle_report_visibility(
                     message=f"Activity report '{report['title']}' has been shared",
                     actor_id=user.id,
                 )
+        else:
+            # Delete the corresponding post when making private
+            supabase.table("posts").delete().eq("report_id", str(report_id)).execute()
 
         return {"is_public": new_is_public, "message": f"Report visibility set to {'public' if new_is_public else 'private'}"}
     except HTTPException:
@@ -790,3 +815,4 @@ async def toggle_report_visibility(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
+

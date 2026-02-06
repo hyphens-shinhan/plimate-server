@@ -10,6 +10,7 @@ class PostType(str, Enum):
     FEED = "FEED"
     NOTICE = "NOTICE"
     EVENT = "EVENT"
+    COUNCIL_REPORT = "COUNCIL_REPORT"
 
 
 class EventStatus(str, Enum):
