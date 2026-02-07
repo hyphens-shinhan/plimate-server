@@ -43,3 +43,9 @@ class CommentResponse(BaseModel):
 class CommentListResponse(BaseModel):
     comments: list[CommentResponse]
     total: int
+
+
+class CommentPseudonymResponse(BaseModel):
+    pseudonym: str
+    avatar_url: str
+    is_locked: bool  # True if already locked for this post

@@ -641,14 +641,27 @@ async def get_messages(
 ):
     """
     Get paginated messages for a chat room.
+    Respects anonymous identities for club chats.
     Uses cursor-based pagination (pass last message ID as cursor).
     """
     await _check_room_member(str(user.id), str(room_id))
 
     try:
+        # Check if this is a club chat room
+        room = (
+            supabase.table("chat_rooms")
+            .select("club_id")
+            .eq("id", str(room_id))
+            .single()
+            .execute()
+        )
+
+        club_id = room.data.get("club_id") if room.data else None
+
+        # Fetch messages (don't join users table yet)
         query = (
             supabase.table("chat_messages")
-            .select("*, users!sender_id(name, avatar_url)")
+            .select("*")
             .eq("room_id", str(room_id))
             .order("sent_at", desc=True)
             .limit(limit + 1)
@@ -673,21 +686,68 @@ async def get_messages(
         if has_more:
             messages_data = messages_data[:limit]
 
-        messages = []
-        for msg in messages_data:
-            sender = msg.get("users")
-            messages.append(
-                MessageResponse(
-                    id=msg["id"],
-                    sender_id=msg.get("sender_id"),
-                    sender_name=sender.get("name") if sender else None,
-                    sender_avatar_url=sender.get("avatar_url") if sender else None,
-                    room_id=msg["room_id"],
-                    message=msg.get("message"),
-                    file_urls=msg.get("file_urls"),
-                    sent_at=msg["sent_at"],
+        # Resolve sender identities based on room type
+        if club_id:
+            # Club chat: Use anonymous identities from club_members
+            sender_ids = list({m["sender_id"] for m in messages_data if m.get("sender_id")})
+            club_members_data = []
+            if sender_ids:
+                club_members_data = (
+                    supabase.table("club_members")
+                    .select(
+                        "user_id, member_nickname, member_avatar_url, users!inner(id, name, avatar_url)"
+                    )
+                    .eq("club_id", club_id)
+                    .in_("user_id", sender_ids)
+                    .execute()
+                ).data or []
+
+            # Build messages with club member identities
+            messages = []
+            for msg in messages_data:
+                sender_name, sender_avatar = _resolve_club_member_identity(
+                    msg.get("sender_id"), club_members_data
                 )
-            )
+                messages.append(
+                    MessageResponse(
+                        id=msg["id"],
+                        sender_id=msg.get("sender_id"),
+                        sender_name=sender_name,
+                        sender_avatar_url=sender_avatar,
+                        room_id=msg["room_id"],
+                        message=msg.get("message"),
+                        file_urls=msg.get("file_urls"),
+                        sent_at=msg["sent_at"],
+                    )
+                )
+        else:
+            # DM room: Use real profiles (fetch from users table)
+            sender_ids = list({m["sender_id"] for m in messages_data if m.get("sender_id")})
+            users_data = {}
+            if sender_ids:
+                users_result = (
+                    supabase.table("users")
+                    .select("id, name, avatar_url")
+                    .in_("id", sender_ids)
+                    .execute()
+                )
+                users_data = {u["id"]: u for u in (users_result.data or [])}
+
+            messages = []
+            for msg in messages_data:
+                sender = users_data.get(msg.get("sender_id"))
+                messages.append(
+                    MessageResponse(
+                        id=msg["id"],
+                        sender_id=msg.get("sender_id"),
+                        sender_name=sender.get("name") if sender else None,
+                        sender_avatar_url=sender.get("avatar_url") if sender else None,
+                        room_id=msg["room_id"],
+                        message=msg.get("message"),
+                        file_urls=msg.get("file_urls"),
+                        sent_at=msg["sent_at"],
+                    )
+                )
 
         return MessageListResponse(messages=messages, has_more=has_more)
     except HTTPException:

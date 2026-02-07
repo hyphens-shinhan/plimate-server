@@ -5,6 +5,7 @@ from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
+from app.core.nickname import generate_nickname, get_random_avatar, get_avatar_url
 from app.schemas.club import (
     ClubCategory,
     ClubCreate,
@@ -20,6 +21,18 @@ from app.schemas.club import (
 )
 
 router = APIRouter(prefix="/clubs", tags=["clubs"])
+
+
+@router.get("/generate-nickname")
+async def generate_club_nickname(user: AuthenticatedUser):
+    """
+    Generate random fun nickname for club join.
+    Call repeatedly for reroll functionality.
+    Frontend uses this to let users reroll and pick their preferred anonymous nickname.
+    """
+    nickname, avatar_id = generate_nickname()
+    # Return full URL to frontend, but database will store just the identifier
+    return {"nickname": nickname, "avatar_url": get_avatar_url(avatar_id)}
 
 
 def _build_user_profile(row: dict) -> UserClubProfile:
@@ -62,6 +75,38 @@ async def create_club(club: ClubCreate, user: AuthenticatedUser):
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         new_club = result.data[0]
+        club_id = new_club["id"]
+
+        # Auto-create chat room for the club
+        try:
+            chat_room = (
+                supabase.table("chat_rooms")
+                .insert(
+                    {
+                        "type": "GROUP",
+                        "club_id": str(club_id),
+                        "name": new_club["name"],
+                        "image_url": new_club.get("image_url"),
+                        "created_by": str(user.id),
+                    }
+                )
+                .execute()
+            )
+
+            # Add creator as chat member
+            if chat_room.data:
+                supabase.table("chat_room_members").insert(
+                    {
+                        "room_id": str(chat_room.data[0]["id"]),
+                        "user_id": str(user.id),
+                    }
+                ).execute()
+        except Exception as chat_error:
+            # Log but don't fail club creation
+            # Chat room can be created lazily if this fails
+            print(
+                f"Warning: Failed to create chat room for club {club_id}: {chat_error}"
+            )
 
         return ClubResponse(
             **new_club, is_member=False, user_profile=None, recent_member_images=None
@@ -125,7 +170,7 @@ async def get_clubs(
                 **row,
                 is_member=row["id"] in profiles,
                 user_profile=profiles.get(row["id"]),
-                recent_member_images=club_avatars.get(row["id"], [])
+                recent_member_images=club_avatars.get(row["id"], []),
             )
             for row in clubs
         ]
@@ -168,7 +213,7 @@ async def get_club(club_id: UUID, user: AuthenticatedUser):
             **result.data,
             is_member=is_member,
             user_profile=user_profile,
-            recent_member_images=[]
+            recent_member_images=[],
         )
     except Exception as e:
         raise HTTPException(
@@ -224,7 +269,7 @@ async def update_club(club_id: UUID, club_update: ClubUpdate, user: Authenticate
                 nickname=profile_data.get("name"),
                 avatar_url=profile_data.get("avatar_url"),
             ),
-            recent_member_images=[]
+            recent_member_images=[],
         )
     except Exception as e:
         raise HTTPException(
@@ -281,7 +326,8 @@ async def join_club(
             if not user_profile.nickname:
                 raise HTTPException(status_code=400, detail="Nickname required")
             final_nickname = user_profile.nickname
-            final_avatar = "random_profile_url"
+            # Assign random avatar from anony1-8 pool
+            final_avatar = get_random_avatar()
         else:
             final_nickname = None
             final_avatar = None
@@ -416,9 +462,7 @@ async def get_gallery_images(
 
 
 @router.delete("/{club_id}/gallery/{image_id}", status_code=status.HTTP_200_OK)
-async def delete_gallery_image(
-    club_id: UUID, image_id: UUID, user: AuthenticatedUser
-):
+async def delete_gallery_image(club_id: UUID, image_id: UUID, user: AuthenticatedUser):
     try:
         club = (
             supabase.table("clubs")
