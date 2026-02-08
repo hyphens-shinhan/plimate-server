@@ -107,3 +107,90 @@ class MentorRecommendationCard(BaseModel):
 class MentorRecommendationsResponse(BaseModel):
     recommendations: list[MentorRecommendationCard]
     total: int
+
+
+# ------------------------------------------------------------------
+# Mentor Profile
+# ------------------------------------------------------------------
+
+
+class MentorProfileUpdate(BaseModel):
+    introduction: str | None = None
+    affiliation: str | None = None
+    expertise: list[str] | None = None
+    fields: list[MentorField] | None = Field(None, min_length=1)
+    frequency: list[MeetingFrequency] | None = Field(None, min_length=1)
+    available_days: list[AvailableDay] | None = Field(None, min_length=1)
+    time_slots: list[TimeSlot] | None = Field(None, min_length=1)
+    methods: list[MeetingMethod] | None = Field(None, min_length=1)
+    communication_styles: list[CommunicationStyle] | None = Field(None, min_length=1)
+    mentoring_focuses: list[MentoringFocus] | None = Field(None, min_length=1)
+
+
+class MentorProfileResponse(BaseModel):
+    user_id: UUID
+    name: str
+    avatar_url: str | None = None
+    introduction: str | None = None
+    affiliation: str | None = None
+    expertise: list[str] | None = None
+    fields: list[MentorField] | None = None
+    frequency: list[MeetingFrequency] | None = None
+    available_days: list[AvailableDay] | None = None
+    time_slots: list[TimeSlot] | None = None
+    methods: list[MeetingMethod] | None = None
+    communication_styles: list[CommunicationStyle] | None = None
+    mentoring_focuses: list[MentoringFocus] | None = None
+
+
+class MentorSearchCard(BaseModel):
+    mentor_id: UUID
+    name: str
+    avatar_url: str | None = None
+    introduction: str | None = None
+    affiliation: str | None = None
+    expertise: list[str] | None = None
+    fields: list[MentorField] | None = None
+
+
+class MentorSearchResponse(BaseModel):
+    mentors: list[MentorSearchCard]
+    total: int
+
+
+# ------------------------------------------------------------------
+# Mentoring Requests
+# ------------------------------------------------------------------
+
+
+class RequestStatus(str, Enum):
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    COMPLETED = "COMPLETED"
+    CANCELED = "CANCELED"
+
+
+class MentoringRequestCreate(BaseModel):
+    mentor_id: UUID
+    message: str | None = Field(None, max_length=1000)
+
+
+class RequestUserInfo(BaseModel):
+    id: UUID
+    name: str
+    avatar_url: str | None = None
+
+
+class MentoringRequestResponse(BaseModel):
+    id: UUID
+    mentee: RequestUserInfo
+    mentor: RequestUserInfo
+    message: str | None = None
+    status: RequestStatus
+    created_at: datetime
+
+
+class MentoringRequestListResponse(BaseModel):
+    requests: list[MentoringRequestResponse]
+    total: int
