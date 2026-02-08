@@ -1,5 +1,3 @@
-import math
-
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.database import supabase
@@ -14,24 +12,6 @@ from app.schemas.networking import (
 )
 
 router = APIRouter(prefix="/networking", tags=["networking"])
-
-
-def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculate distance between two points in kilometers."""
-    R = 6371  # Earth's radius in km
-
-    lat1_rad = math.radians(lat1)
-    lat2_rad = math.radians(lat2)
-    delta_lat = math.radians(lat2 - lat1)
-    delta_lon = math.radians(lon2 - lon1)
-
-    a = (
-        math.sin(delta_lat / 2) ** 2
-        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
-    )
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    return R * c
 
 
 def _get_blocked_user_ids(user_id: str) -> set[str]:
@@ -85,7 +65,7 @@ async def get_nearby_users(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    """Get users near current user's location for map display."""
+    """Get users near current user's location for map display (PostGIS)."""
     # Get current user's location
     my_profile = (
         supabase.table("user_profiles")
@@ -107,50 +87,38 @@ async def get_nearby_users(
     # Get blocked user IDs
     blocked_ids = _get_blocked_user_ids(str(user.id))
 
-    # Get all users with public locations
-    users_result = (
-        supabase.table("user_profiles")
-        .select("user_id, latitude, longitude, affiliation, users(id, name, avatar_url)")
-        .eq("is_location_public", True)
-        .neq("user_id", str(user.id))
-        .not_.is_("latitude", "null")
-        .not_.is_("longitude", "null")
-        .execute()
-    )
+    # PostGIS RPC: ST_DWithin + ST_Distance with spatial index
+    result = supabase.rpc(
+        "get_nearby_users",
+        {
+            "center_lat": my_lat,
+            "center_lng": my_lng,
+            "radius_meters": radius_km * 1000.0,
+            "excluded_ids": list(blocked_ids),
+            "requesting_user_id": str(user.id),
+            "result_limit": limit,
+            "result_offset": offset,
+        },
+    ).execute()
 
-    # Calculate distances and filter
-    nearby_users = []
-    for row in users_result.data or []:
-        if row["user_id"] in blocked_ids:
-            continue
+    data = result.data
 
-        distance = haversine_distance(
-            my_lat, my_lng, row["latitude"], row["longitude"]
+    nearby_users = [
+        NearbyUserCard(
+            id=row["id"],
+            name=row["name"],
+            avatar_url=row.get("avatar_url"),
+            affiliation=row.get("affiliation"),
+            latitude=row["latitude"],
+            longitude=row["longitude"],
+            distance_km=float(row["distance_km"]),
         )
-
-        if distance <= radius_km:
-            user_data = row.get("users")
-            if user_data:
-                nearby_users.append(
-                    NearbyUserCard(
-                        id=user_data["id"],
-                        name=user_data["name"],
-                        avatar_url=user_data.get("avatar_url"),
-                        affiliation=row.get("affiliation"),
-                        latitude=row["latitude"],
-                        longitude=row["longitude"],
-                        distance_km=round(distance, 2),
-                    )
-                )
-
-    # Sort by distance and paginate
-    nearby_users.sort(key=lambda u: u.distance_km)
-    total = len(nearby_users)
-    nearby_users = nearby_users[offset : offset + limit]
+        for row in data["users"]
+    ]
 
     return NearbyUsersResponse(
         users=nearby_users,
-        total=total,
+        total=data["total"],
         center_lat=my_lat,
         center_lng=my_lng,
         radius_km=radius_km,
