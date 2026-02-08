@@ -1,8 +1,15 @@
-from fastapi import APIRouter, HTTPException, status
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
+from app.api.v1.grades import calculate_gpa
+from app.schemas.grades import SemesterGradeResponse
 from app.schemas.user import (
+    MandatoryActivityStatus,
+    MandatoryStatusResponse,
+    ScholarshipEligibilityResponse,
     UserHomeProfile,
     UserMyProfile,
     UserProfileUpdate,
@@ -111,6 +118,122 @@ async def update_current_user_my_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
+
+
+@router.get("/me/scholarship-eligibility", response_model=ScholarshipEligibilityResponse)
+async def get_scholarship_eligibility(
+    user: AuthenticatedUser,
+    year: int | None = Query(None, ge=2000, le=2100),
+):
+    """Get scholarship eligibility summary: GPA, volunteer hours, mandatory progress."""
+    current_year = year or datetime.now().year
+
+    # 1. Fetch semester grades for the year
+    grades_result = (
+        supabase.table("semester_grades")
+        .select("*")
+        .eq("user_id", str(user.id))
+        .eq("year", current_year)
+        .execute()
+    )
+
+    grades = [SemesterGradeResponse(**row) for row in grades_result.data or []]
+    gpa_data = calculate_gpa(grades)
+
+    # 2. Fetch volunteer hours
+    profile_result = (
+        supabase.table("user_profiles")
+        .select("volunteer_hours")
+        .eq("user_id", str(user.id))
+        .single()
+        .execute()
+    )
+    volunteer_hours = (profile_result.data or {}).get("volunteer_hours", 0) or 0
+
+    # 3. Fetch mandatory activity progress for the year
+    activities_result = (
+        supabase.table("mandatory_activities")
+        .select("id")
+        .eq("year", current_year)
+        .execute()
+    )
+    mandatory_total = len(activities_result.data or [])
+
+    mandatory_completed = 0
+    if mandatory_total > 0:
+        activity_ids = [a["id"] for a in activities_result.data]
+        submissions_result = (
+            supabase.table("mandatory_submissions")
+            .select("id")
+            .eq("user_id", str(user.id))
+            .in_("activity_id", activity_ids)
+            .eq("is_submitted", True)
+            .execute()
+        )
+        mandatory_completed = len(submissions_result.data or [])
+
+    return ScholarshipEligibilityResponse(
+        current_year=current_year,
+        gpa=gpa_data["gpa"],
+        total_credits=gpa_data["total_credits"],
+        semester_breakdown=gpa_data["semester_breakdown"],
+        volunteer_hours=volunteer_hours,
+        mandatory_total=mandatory_total,
+        mandatory_completed=mandatory_completed,
+    )
+
+
+@router.get("/me/mandatory-status", response_model=MandatoryStatusResponse)
+async def get_mandatory_status(
+    user: AuthenticatedUser,
+    year: int | None = Query(None, ge=2000, le=2100),
+):
+    """Get per-activity mandatory completion status for the scholarship eligibility widget."""
+    current_year = year or datetime.now().year
+
+    activities_result = (
+        supabase.table("mandatory_activities")
+        .select("id, title, due_date, activity_type")
+        .eq("year", current_year)
+        .order("due_date")
+        .execute()
+    )
+
+    activities = activities_result.data or []
+    if not activities:
+        return MandatoryStatusResponse(
+            year=current_year, total=0, completed=0, activities=[]
+        )
+
+    activity_ids = [a["id"] for a in activities]
+    submissions_result = (
+        supabase.table("mandatory_submissions")
+        .select("activity_id")
+        .eq("user_id", str(user.id))
+        .in_("activity_id", activity_ids)
+        .eq("is_submitted", True)
+        .execute()
+    )
+
+    completed_ids = {s["activity_id"] for s in submissions_result.data or []}
+
+    activity_statuses = [
+        MandatoryActivityStatus(
+            id=a["id"],
+            title=a["title"],
+            due_date=a["due_date"],
+            activity_type=a["activity_type"],
+            is_completed=a["id"] in completed_ids,
+        )
+        for a in activities
+    ]
+
+    return MandatoryStatusResponse(
+        year=current_year,
+        total=len(activities),
+        completed=len(completed_ids),
+        activities=activity_statuses,
+    )
 
 
 @router.get("/me/privacy", response_model=UserPrivacySettings)

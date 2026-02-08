@@ -212,7 +212,7 @@ async def update_my_survey(
 # ==================================================================
 
 
-@router.put("/profile", response_model=MentorProfileResponse)
+@router.patch("/profile", response_model=MentorProfileResponse)
 async def update_mentor_profile(
     profile: MentorProfileUpdate,
     user: AuthenticatedUser,

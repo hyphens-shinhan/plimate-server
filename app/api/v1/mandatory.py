@@ -33,9 +33,9 @@ async def _check_admin(user_id: str) -> None:
 
 
 async def _check_yb_role(user_id: str) -> None:
-    """Verify that the user has YB role."""
+    """Verify that the user has YB or YB_LEADER role."""
     result = supabase.table("users").select("role").eq("id", user_id).single().execute()
-    if not result.data or result.data.get("role") != "YB":
+    if not result.data or result.data.get("role") not in ("YB", "YB_LEADER"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only YB users can perform this action",

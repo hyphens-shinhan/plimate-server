@@ -1,3 +1,4 @@
+from datetime import date
 from enum import Enum
 from uuid import UUID
 
@@ -121,6 +122,31 @@ class UserProfileUpdate(BaseModel):
     longitude: float | None = None
 
     volunteer_hours: int | None = Field(None, ge=0, le=10000)
+
+
+class ScholarshipEligibilityResponse(BaseModel):
+    current_year: int
+    gpa: float
+    total_credits: float
+    semester_breakdown: list[dict]
+    volunteer_hours: int
+    mandatory_total: int
+    mandatory_completed: int
+
+
+class MandatoryActivityStatus(BaseModel):
+    id: UUID
+    title: str
+    due_date: date
+    activity_type: str
+    is_completed: bool
+
+
+class MandatoryStatusResponse(BaseModel):
+    year: int
+    total: int
+    completed: int
+    activities: list[MandatoryActivityStatus]
 
 
 class VolunteerHoursResponse(BaseModel):
