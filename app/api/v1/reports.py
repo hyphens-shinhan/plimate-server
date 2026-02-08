@@ -13,8 +13,6 @@ from app.schemas.report import (
     ReceiptItemResponse,
     AttendanceResponse,
     ConfirmationStatus,
-    PublicReportResponse,
-    PublicAttendanceResponse,
 )
 
 router = APIRouter(prefix="/reports", tags=["councils"])
@@ -187,7 +185,9 @@ async def get_report(
             .single()
             .execute()
         )
-        leader_id = council_result.data.get("leader_id") if council_result.data else None
+        leader_id = (
+            council_result.data.get("leader_id") if council_result.data else None
+        )
 
         # Fetch report
         report_result = (
@@ -234,7 +234,12 @@ async def get_report(
         )
 
         return _build_report_response(
-            report, year, receipts, receipt_items, attendance_result.data or [], leader_id
+            report,
+            year,
+            receipts,
+            receipt_items,
+            attendance_result.data or [],
+            leader_id,
         )
     except HTTPException:
         raise
@@ -271,7 +276,9 @@ async def update_report(
             .single()
             .execute()
         )
-        leader_id = council_result.data.get("leader_id") if council_result.data else None
+        leader_id = (
+            council_result.data.get("leader_id") if council_result.data else None
+        )
 
         # Try to fetch existing report
         report_result = (
@@ -291,12 +298,18 @@ async def update_report(
                 "council_id": str(council_id),
                 "month": month,
                 "title": report_update.title or "",
-                "activity_date": report_update.activity_date.isoformat() if report_update.activity_date else None,
+                "activity_date": (
+                    report_update.activity_date.isoformat()
+                    if report_update.activity_date
+                    else None
+                ),
                 "location": report_update.location or "",
                 "content": report_update.content,
                 "image_urls": report_update.image_urls,
             }
-            insert_result = supabase.table("activity_reports").insert(report_data).execute()
+            insert_result = (
+                supabase.table("activity_reports").insert(report_data).execute()
+            )
 
             if not insert_result.data:
                 raise HTTPException(
@@ -337,7 +350,9 @@ async def update_report(
                     .eq("id", report_id)
                     .execute()
                 )
-                updated_report = update_result.data[0] if update_result.data else existing_report
+                updated_report = (
+                    update_result.data[0] if update_result.data else existing_report
+                )
             else:
                 updated_report = existing_report
 
@@ -354,7 +369,9 @@ async def update_report(
             )
             if existing_receipts.data:
                 receipt_ids = [r["id"] for r in existing_receipts.data]
-                supabase.table("receipt_items").delete().in_("receipt_id", receipt_ids).execute()
+                supabase.table("receipt_items").delete().in_(
+                    "receipt_id", receipt_ids
+                ).execute()
                 supabase.table("receipts").delete().eq("report_id", report_id).execute()
 
             # Insert new receipts
@@ -391,7 +408,10 @@ async def update_report(
         else:
             # Fetch existing receipts
             receipts_result = (
-                supabase.table("receipts").select("*").eq("report_id", report_id).execute()
+                supabase.table("receipts")
+                .select("*")
+                .eq("report_id", report_id)
+                .execute()
             )
             all_receipts = receipts_result.data or []
             if all_receipts:
@@ -407,7 +427,9 @@ async def update_report(
         # Handle attendance update (replace all if provided)
         if report_update.attendance is not None:
             # Delete existing attendance
-            supabase.table("activity_attendance").delete().eq("report_id", report_id).execute()
+            supabase.table("activity_attendance").delete().eq(
+                "report_id", report_id
+            ).execute()
 
             # Insert new attendance - leader is confirmed by default
             if report_update.attendance:
@@ -416,7 +438,11 @@ async def update_report(
                         "report_id": report_id,
                         "user_id": str(a.user_id),
                         "status": a.status.value,
-                        "confirmation": "CONFIRMED" if str(a.user_id) == str(leader_id) else "PENDING",
+                        "confirmation": (
+                            "CONFIRMED"
+                            if str(a.user_id) == str(leader_id)
+                            else "PENDING"
+                        ),
                     }
                     for a in report_update.attendance
                 ]
@@ -541,8 +567,8 @@ async def confirm_attendance(report_id: UUID, user: AuthenticatedUser):
 )
 async def reject_attendance(report_id: UUID, user: AuthenticatedUser):
     """
-    Reject the authenticated user's attendance confirmation for a report.
-    Resets confirmation status back to PENDING.
+    Reject the authenticated user's attendance for a report.
+    Sets status to ABSENT and confirmation to CONFIRMED (member has responded).
     Members can only reject their own attendance record.
     """
     try:
@@ -561,10 +587,10 @@ async def reject_attendance(report_id: UUID, user: AuthenticatedUser):
                 detail="Attendance record not found",
             )
 
-        # Reset confirmation status to PENDING
+        # Mark confirmation as CONFIRMED (member has validated the report)
         result = (
             supabase.table("activity_attendance")
-            .update({"confirmation": ConfirmationStatus.PENDING.value})
+            .update({"confirmation": ConfirmationStatus.CONFIRMED.value})
             .eq("report_id", str(report_id))
             .eq("user_id", str(user.id))
             .execute()
@@ -772,14 +798,16 @@ async def toggle_report_visibility(
             # Create a post entry for the council report
             post_result = (
                 supabase.table("posts")
-                .insert({
-                    "author_id": str(council["leader_id"]),
-                    "type": "COUNCIL_REPORT",
-                    "title": report.get("title"),
-                    "content": report.get("content"),
-                    "image_urls": report.get("image_urls"),
-                    "report_id": str(report_id),
-                })
+                .insert(
+                    {
+                        "author_id": str(council["leader_id"]),
+                        "type": "COUNCIL_REPORT",
+                        "title": report.get("title"),
+                        "content": report.get("content"),
+                        "image_urls": report.get("image_urls"),
+                        "report_id": str(report_id),
+                    }
+                )
                 .execute()
             )
 
@@ -797,7 +825,7 @@ async def toggle_report_visibility(
                 .eq("council_id", str(council_id))
                 .execute()
             )
-            for member in (members_result.data or []):
+            for member in members_result.data or []:
                 create_notification(
                     recipient_id=member["user_id"],
                     notification_type=NotificationType.REPORT_EXPORT,
@@ -808,11 +836,13 @@ async def toggle_report_visibility(
             # Delete the corresponding post when making private
             supabase.table("posts").delete().eq("report_id", str(report_id)).execute()
 
-        return {"is_public": new_is_public, "message": f"Report visibility set to {'public' if new_is_public else 'private'}"}
+        return {
+            "is_public": new_is_public,
+            "message": f"Report visibility set to {'public' if new_is_public else 'private'}",
+        }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
-
