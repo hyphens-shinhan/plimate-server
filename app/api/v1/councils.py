@@ -43,7 +43,7 @@ async def create_council(council: CouncilCreate, user: AuthenticatedUser):
     await _check_admin(str(user.id))
 
     try:
-        result = supabase.table("councils").insert(council.model_dump()).execute()
+        result = supabase.table("councils").insert(council.model_dump(mode="json")).execute()
 
         if not result.data:
             raise HTTPException(
