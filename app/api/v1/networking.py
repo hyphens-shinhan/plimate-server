@@ -71,11 +71,11 @@ async def get_nearby_users(
         supabase.table("user_profiles")
         .select("latitude, longitude")
         .eq("user_id", str(user.id))
-        .single()
+        .maybe_single()
         .execute()
     )
 
-    if not my_profile.data or not my_profile.data.get("latitude"):
+    if not my_profile or not my_profile.data or not my_profile.data.get("latitude"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your location is not set. Please update your profile.",

@@ -145,10 +145,10 @@ async def get_scholarship_eligibility(
         supabase.table("user_profiles")
         .select("volunteer_hours")
         .eq("user_id", str(user.id))
-        .single()
+        .maybe_single()
         .execute()
     )
-    volunteer_hours = (profile_result.data or {}).get("volunteer_hours", 0) or 0
+    volunteer_hours = ((profile_result.data if profile_result else None) or {}).get("volunteer_hours", 0) or 0
 
     # 3. Fetch mandatory activity progress for the year
     activities_result = (
@@ -245,9 +245,17 @@ async def get_current_user_privacy(user: AuthenticatedUser):
                 "is_location_public, is_contact_public, is_scholarship_public, is_follower_public"
             )
             .eq("user_id", str(user.id))
-            .single()
+            .maybe_single()
             .execute()
         )
+
+        if not result or not result.data:
+            return UserPrivacySettings(
+                is_location_public=False,
+                is_contact_public=False,
+                is_scholarship_public=False,
+                is_follower_public=False,
+            )
 
         return UserPrivacySettings(**result.data)
     except Exception as e:
@@ -330,11 +338,11 @@ async def get_my_volunteer_hours(user: AuthenticatedUser):
             supabase.table("user_profiles")
             .select("volunteer_hours")
             .eq("user_id", str(user.id))
-            .single()
+            .maybe_single()
             .execute()
         )
 
-        if not result.data:
+        if not result or not result.data:
             return VolunteerHoursResponse(volunteer_hours=0)
 
         return VolunteerHoursResponse(**result.data)

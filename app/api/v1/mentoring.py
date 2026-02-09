@@ -319,11 +319,11 @@ async def get_my_mentor_profile(user: AuthenticatedUser):
         supabase.table("mentor_details")
         .select("*")
         .eq("user_id", str(user.id))
-        .single()
+        .maybe_single()
         .execute()
     )
 
-    row = details_result.data or {}
+    row = (details_result.data if details_result else None) or {}
     return MentorProfileResponse(
         user_id=user.id,
         name=user_result.data["name"],
@@ -428,11 +428,11 @@ async def get_mentor_detail(
         supabase.table("mentor_details")
         .select("*")
         .eq("user_id", str(mentor_id))
-        .single()
+        .maybe_single()
         .execute()
     )
 
-    row = details_result.data or {}
+    row = (details_result.data if details_result else None) or {}
     return MentorProfileResponse(
         user_id=mentor_id,
         name=user_result.data["name"],
