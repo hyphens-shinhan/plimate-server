@@ -305,11 +305,12 @@ async def get_my_mentor_profile(user: AuthenticatedUser):
         supabase.table("users")
         .select("id, name, avatar_url, role")
         .eq("id", str(user.id))
-        .single()
+        .maybe_single()
         .execute()
     )
 
-    if not user_result.data or user_result.data["role"] != "MENTOR":
+    user_data = (user_result.data if user_result else None) or {}
+    if not user_data or user_data.get("role") != "MENTOR":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only mentors can view their mentor profile.",
@@ -326,8 +327,8 @@ async def get_my_mentor_profile(user: AuthenticatedUser):
     row = (details_result.data if details_result else None) or {}
     return MentorProfileResponse(
         user_id=user.id,
-        name=user_result.data["name"],
-        avatar_url=user_result.data.get("avatar_url"),
+        name=user_data["name"],
+        avatar_url=user_data.get("avatar_url"),
         introduction=row.get("introduction"),
         affiliation=row.get("affiliation"),
         expertise=row.get("expertise"),
@@ -414,11 +415,12 @@ async def get_mentor_detail(
         .select("id, name, avatar_url, role")
         .eq("id", str(mentor_id))
         .eq("role", "MENTOR")
-        .single()
+        .maybe_single()
         .execute()
     )
 
-    if not user_result.data:
+    mentor_data = (user_result.data if user_result else None) or {}
+    if not mentor_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Mentor not found.",
@@ -435,8 +437,8 @@ async def get_mentor_detail(
     row = (details_result.data if details_result else None) or {}
     return MentorProfileResponse(
         user_id=mentor_id,
-        name=user_result.data["name"],
-        avatar_url=user_result.data.get("avatar_url"),
+        name=mentor_data["name"],
+        avatar_url=mentor_data.get("avatar_url"),
         introduction=row.get("introduction"),
         affiliation=row.get("affiliation"),
         expertise=row.get("expertise"),

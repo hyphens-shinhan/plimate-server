@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class PostType(str, Enum):
@@ -120,8 +120,7 @@ class FeedPostResponse(BaseModel):
 
     image_urls: list[str] | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NoticePostResponse(BaseModel):
@@ -140,8 +139,7 @@ class NoticePostResponse(BaseModel):
     file_urls: list[str] | None = None
     image_urls: list[str] | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EventPostResponse(BaseModel):
@@ -173,8 +171,7 @@ class EventPostResponse(BaseModel):
     file_urls: list[str] | None = None
     image_urls: list[str] | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FeedPostListResponse(BaseModel):
@@ -199,6 +196,7 @@ class MyPostItemType(str, Enum):
 
 class MyPostItem(BaseModel):
     """Represents a post item in the user's posts list."""
+
     id: UUID
     type: MyPostItemType
     created_at: datetime

@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 class LetterGrade(str, Enum):
@@ -69,8 +69,7 @@ class SemesterGradeResponse(BaseModel):
     credits: float
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SemesterGradeListResponse(BaseModel):

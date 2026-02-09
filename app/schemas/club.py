@@ -1,8 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
-
+from pydantic import BaseModel, ConfigDict
 
 from enum import StrEnum
 
@@ -58,8 +57,7 @@ class ClubResponse(BaseModel):
 
     recent_member_images: list[str] | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ClubListResponse(BaseModel):

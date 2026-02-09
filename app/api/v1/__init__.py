@@ -17,6 +17,7 @@ from app.api.v1 import (
     networking,
     grades,
     mentoring,
+    videos,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -37,3 +38,4 @@ router.include_router(mandatory.router)
 router.include_router(networking.router)
 router.include_router(grades.router)
 router.include_router(mentoring.router)
+router.include_router(videos.router)

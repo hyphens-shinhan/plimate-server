@@ -2,7 +2,7 @@ from datetime import date
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class AppRole(str, Enum):
@@ -34,8 +34,7 @@ class UserHomeProfile(BaseModel):
     scholarship_type: ScholarshipType | None = None
     scholarship_batch: int | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserPublicProfile(BaseModel):
@@ -58,8 +57,7 @@ class UserPublicProfile(BaseModel):
 
     address: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserMyProfile(BaseModel):
@@ -85,8 +83,7 @@ class UserMyProfile(BaseModel):
 
     volunteer_hours: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserPrivacySettings(BaseModel):
@@ -95,8 +92,7 @@ class UserPrivacySettings(BaseModel):
     is_scholarship_public: bool
     is_follower_public: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserPrivacyUpdate(BaseModel):
@@ -151,12 +147,15 @@ class MandatoryStatusResponse(BaseModel):
 
 class VolunteerHoursResponse(BaseModel):
     """Schema for volunteer hours response."""
+
     volunteer_hours: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VolunteerHoursUpdate(BaseModel):
     """Schema for updating volunteer hours."""
-    volunteer_hours: int = Field(..., ge=0, le=10000, description="Total volunteer hours")
+
+    volunteer_hours: int = Field(
+        ..., ge=0, le=10000, description="Total volunteer hours"
+    )
