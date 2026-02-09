@@ -7,11 +7,10 @@ from app.core.deps import AuthenticatedUser
 from app.schemas.activity import (
     AcademicReportStatus,
     ActivitiesSummaryResponse,
+    ActivityStatus,
     AppliedEventStatus,
-    AppliedEventsStatus,
     CouncilReportStatus,
     MandatoryActivityStatus,
-    MandatoryReportStatus,
     MonthlyActivityStatus,
     YearlyActivitySummary,
 )
@@ -52,6 +51,15 @@ def _get_event_status(event_start: datetime, event_end: datetime | None) -> Even
     if event_end and now < event_end:
         return EventStatus.OPEN
     return EventStatus.CLOSED
+
+
+def _academic_status(has_report: bool, is_submitted: bool) -> ActivityStatus:
+    """Derive academic report status."""
+    if not has_report:
+        return ActivityStatus.NOT_STARTED
+    if is_submitted:
+        return ActivityStatus.SUBMITTED
+    return ActivityStatus.DRAFT
 
 
 @router.get("", response_model=ActivitiesSummaryResponse)
@@ -101,7 +109,7 @@ async def get_activities_summary(user: AuthenticatedUser):
         )
         monitoring_years = set(r["year"] for r in monitoring_result.data or [])
 
-        # Get academic reports for the user (only count submitted ones as completed)
+        # Get academic reports for the user
         academic_result = (
             supabase.table("academic_reports")
             .select("year, month, is_submitted")
@@ -175,68 +183,72 @@ async def get_activities_summary(user: AuthenticatedUser):
                     "is_submitted": report.get("is_submitted", False),
                 }
 
-        # Build academic reports lookup: {year: set(months)} - only count submitted reports
-        academic_by_year: dict[int, set[int]] = {}
+        # Build academic reports lookup: {year: {month: is_submitted}}
+        academic_by_year: dict[int, dict[int, bool]] = {}
         for report in academic_data:
-            if not report.get("is_submitted"):
-                continue
             year = report["year"]
-            if year not in academic_by_year:
-                academic_by_year[year] = set()
-            academic_by_year[year].add(report["month"])
+            academic_by_year.setdefault(year, {})[report["month"]] = report.get(
+                "is_submitted", False
+            )
 
         # Build unified yearly summaries
         yearly_summaries = []
         for year in available_years:
             council_data = council_by_year.get(year, {})
-            academic_completed = academic_by_year.get(year, set())
+            academic_months = academic_by_year.get(year, {})
             is_monitored = year in monitoring_years
 
-            # Build monthly status for all 12 months
+            # Build monthly status
             months = []
             for m in ALL_MONTHS:
-                council_report_data = council_data.get(m, {})
-                council_completed = m in council_data
-                academic_done = m in academic_completed
+                council_report_data = council_data.get(m)
+
+                has_academic = m in academic_months
+                academic_submitted = academic_months.get(m, False)
 
                 months.append(
                     MonthlyActivityStatus(
                         month=m,
                         council_report=CouncilReportStatus(
                             title=council_report_data.get("title") if council_report_data else None,
-                            exists=council_completed,
+                            exists=council_report_data is not None,
                             is_submitted=council_report_data.get("is_submitted", False) if council_report_data else False,
                         ),
                         academic_report=AcademicReportStatus(
-                            is_submitted=academic_done,
+                            status=_academic_status(has_academic, academic_submitted),
                         ),
                     )
                 )
 
             # Check if all council months (Apr-Dec) are completed
             council_all_completed = all(
-                m in council_data for m in COUNCIL_REPORT_MONTHS
+                council_data.get(m, {}).get("is_submitted", False)
+                for m in COUNCIL_REPORT_MONTHS
             )
 
-            # Check if all academic months (Jan-Dec) are completed
-            academic_all_completed = len(academic_completed) == len(
-                ACADEMIC_REPORT_MONTHS
+            # Check if all academic months are submitted
+            academic_all_completed = all(
+                academic_months.get(m, False) for m in ACADEMIC_REPORT_MONTHS
             )
 
-            # Build mandatory report status with list of activities
+            # Build mandatory activity statuses (flat list)
             activities_for_year = mandatory_activities_by_year.get(year, [])
             mandatory_activity_statuses = [
                 MandatoryActivityStatus(
                     id=a["id"],
                     title=a["title"],
                     activity_type=a["activity_type"],
-                    is_submitted=mandatory_submissions_by_activity.get(a["id"], False),
+                    status=(
+                        ActivityStatus.SUBMITTED
+                        if mandatory_submissions_by_activity.get(a["id"], False)
+                        else ActivityStatus.NOT_STARTED
+                    ),
                     due_date=a["due_date"],
                 )
                 for a in activities_for_year
             ]
 
-            # Build applied events status
+            # Build applied events (flat list)
             events_for_year = events_by_year.get(year, [])
             applied_event_statuses = []
             for e in events_for_year:
@@ -265,12 +277,8 @@ async def get_activities_summary(user: AuthenticatedUser):
                     council_all_completed=council_all_completed,
                     academic_all_completed=academic_all_completed,
                     academic_is_monitored=is_monitored,
-                    mandatory_report=MandatoryReportStatus(
-                        activities=mandatory_activity_statuses,
-                    ),
-                    applied_events=AppliedEventsStatus(
-                        events=applied_event_statuses,
-                    ),
+                    mandatory_activities=mandatory_activity_statuses,
+                    applied_events=applied_event_statuses,
                 )
             )
 

@@ -1,9 +1,16 @@
 from datetime import date, datetime
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from app.schemas.post import EventStatus
+
+
+class ActivityStatus(str, Enum):
+    NOT_STARTED = "NOT_STARTED"
+    DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
 
 
 class CouncilReportStatus(BaseModel):
@@ -13,19 +20,15 @@ class CouncilReportStatus(BaseModel):
 
 
 class AcademicReportStatus(BaseModel):
-    is_submitted: bool
+    status: ActivityStatus
 
 
 class MandatoryActivityStatus(BaseModel):
     id: UUID
     title: str
-    activity_type: str  # GOAL, SIMPLE_REPORT, URL_REDIRECT
-    is_submitted: bool
+    activity_type: str
+    status: ActivityStatus
     due_date: date
-
-
-class MandatoryReportStatus(BaseModel):
-    activities: list[MandatoryActivityStatus]
 
 
 class AppliedEventStatus(BaseModel):
@@ -33,10 +36,6 @@ class AppliedEventStatus(BaseModel):
     title: str
     event_date: datetime
     status: EventStatus
-
-
-class AppliedEventsStatus(BaseModel):
-    events: list[AppliedEventStatus]
 
 
 class MonthlyActivityStatus(BaseModel):
@@ -52,8 +51,8 @@ class YearlyActivitySummary(BaseModel):
     council_all_completed: bool
     academic_all_completed: bool
     academic_is_monitored: bool
-    mandatory_report: MandatoryReportStatus
-    applied_events: AppliedEventsStatus
+    mandatory_activities: list[MandatoryActivityStatus]
+    applied_events: list[AppliedEventStatus]
 
 
 class ActivitiesSummaryResponse(BaseModel):
