@@ -57,6 +57,19 @@ class SemesterGradeCreate(BaseModel):
         return v.strip()
 
 
+class SemesterGradeUpdate(BaseModel):
+    """Schema for updating a semester grade."""
+
+    course_name: str | None = Field(None, min_length=1, max_length=200)
+    grade: LetterGrade | None = None
+    credits: int | None = None
+
+    @field_validator("course_name")
+    @classmethod
+    def validate_course_name(cls, v: str | None) -> str | None:
+        return v.strip() if v else v
+
+
 class SemesterGradeResponse(BaseModel):
     """Schema for semester grade response."""
 

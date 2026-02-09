@@ -11,6 +11,7 @@ from app.schemas.grades import (
     SemesterGradeCreate,
     SemesterGradeListResponse,
     SemesterGradeResponse,
+    SemesterGradeUpdate,
     YearGPAResponse,
 )
 
@@ -177,6 +178,46 @@ async def get_year_gpa(year: int, user: AuthenticatedUser):
             semester_breakdown=gpa_data["semester_breakdown"],
             grades=grades,
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.patch("/{grade_id}", response_model=SemesterGradeResponse)
+async def update_grade(
+    grade_id: UUID, grade_update: SemesterGradeUpdate, user: AuthenticatedUser
+):
+    """Update a specific grade (only own grades)."""
+    update_data = grade_update.model_dump(exclude_unset=True)
+
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update"
+        )
+
+    # Convert enums to values for Supabase
+    if "grade" in update_data and update_data["grade"] is not None:
+        update_data["grade"] = update_data["grade"].value
+
+    try:
+        result = (
+            supabase.table("semester_grades")
+            .update(update_data)
+            .eq("id", str(grade_id))
+            .eq("user_id", str(user.id))
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Grade not found or unauthorized",
+            )
+
+        return SemesterGradeResponse(**result.data[0])
     except HTTPException:
         raise
     except Exception as e:
