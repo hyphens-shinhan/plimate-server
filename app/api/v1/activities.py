@@ -140,9 +140,11 @@ async def get_activities_summary(user: AuthenticatedUser):
             .execute()
         )
         mandatory_submissions_by_activity: dict[str, bool] = {
-            s["activity_id"]: s["is_submitted"]
+            s["activity_id"]: s.get("is_submitted", False)
             for s in mandatory_submissions_result.data or []
         }
+        # Track which activities have a submission row (DRAFT or SUBMITTED)
+        mandatory_has_submission: set[str] = set(mandatory_submissions_by_activity.keys())
 
         # Get user's applied events
         applied_events_result = (
@@ -233,20 +235,25 @@ async def get_activities_summary(user: AuthenticatedUser):
 
             # Build mandatory activity statuses (flat list)
             activities_for_year = mandatory_activities_by_year.get(year, [])
-            mandatory_activity_statuses = [
-                MandatoryActivityStatus(
-                    id=a["id"],
-                    title=a["title"],
-                    activity_type=a["activity_type"],
-                    status=(
-                        ActivityStatus.SUBMITTED
-                        if mandatory_submissions_by_activity.get(a["id"], False)
-                        else ActivityStatus.NOT_STARTED
-                    ),
-                    due_date=a["due_date"],
+            mandatory_activity_statuses = []
+            for a in activities_for_year:
+                aid = a["id"]
+                if aid not in mandatory_has_submission:
+                    m_status = ActivityStatus.NOT_STARTED
+                elif mandatory_submissions_by_activity.get(aid, False):
+                    m_status = ActivityStatus.SUBMITTED
+                else:
+                    m_status = ActivityStatus.DRAFT
+
+                mandatory_activity_statuses.append(
+                    MandatoryActivityStatus(
+                        id=aid,
+                        title=a["title"],
+                        activity_type=a["activity_type"],
+                        status=m_status,
+                        due_date=a["due_date"],
+                    )
                 )
-                for a in activities_for_year
-            ]
 
             # Build applied events (flat list)
             events_for_year = events_by_year.get(year, [])

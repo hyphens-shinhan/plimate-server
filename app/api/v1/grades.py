@@ -198,6 +198,34 @@ async def update_grade(
             status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update"
         )
 
+    # If course_name is being updated, check for duplicates
+    if "course_name" in update_data:
+        # First get the existing grade to know year/semester
+        existing = (
+            supabase.table("semester_grades")
+            .select("year, semester")
+            .eq("id", str(grade_id))
+            .eq("user_id", str(user.id))
+            .single()
+            .execute()
+        )
+        if existing.data:
+            duplicate = (
+                supabase.table("semester_grades")
+                .select("id")
+                .eq("user_id", str(user.id))
+                .eq("year", existing.data["year"])
+                .eq("semester", existing.data["semester"])
+                .eq("course_name", update_data["course_name"])
+                .neq("id", str(grade_id))
+                .execute()
+            )
+            if duplicate.data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Course already exists for this semester",
+                )
+
     # Convert enums to values for Supabase
     if "grade" in update_data and update_data["grade"] is not None:
         update_data["grade"] = update_data["grade"].value
