@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -758,12 +758,65 @@ async def get_messages(
         )
 
 
+def _send_message_notifications(
+    room_id: UUID, sender_id: UUID
+) -> None:
+    """Background task: notify all other room members about a new message."""
+    try:
+        room_info = (
+            supabase.table("chat_rooms")
+            .select("type, club_id")
+            .eq("id", str(room_id))
+            .single()
+            .execute()
+        )
+
+        members = (
+            supabase.table("chat_room_members")
+            .select("user_id")
+            .eq("room_id", str(room_id))
+            .neq("user_id", str(sender_id))
+            .execute()
+        )
+
+        actor_id = sender_id
+        club_id = None
+
+        if room_info.data and room_info.data.get("club_id"):
+            club_id = room_info.data["club_id"]
+            club_data = (
+                supabase.table("clubs")
+                .select("anonymity")
+                .eq("id", str(club_id))
+                .single()
+                .execute()
+            )
+            if club_data.data and club_data.data["anonymity"] in ("PRIVATE", "BOTH"):
+                actor_id = None
+
+        for member in members.data:
+            create_notification(
+                recipient_id=UUID(member["user_id"]),
+                notification_type=NotificationType.CHAT_MESSAGE,
+                actor_id=actor_id,
+                room_id=room_id,
+                club_id=UUID(club_id) if club_id else None,
+            )
+    except Exception:
+        pass
+
+
 @router.post(
     "/{room_id}/messages",
     response_model=MessageResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def send_message(room_id: UUID, msg: MessageCreate, user: AuthenticatedUser):
+async def send_message(
+    room_id: UUID,
+    msg: MessageCreate,
+    user: AuthenticatedUser,
+    background_tasks: BackgroundTasks,
+):
     """
     Send a message to a chat room.
     Must provide at least message text or file_urls.
@@ -794,45 +847,10 @@ async def send_message(room_id: UUID, msg: MessageCreate, user: AuthenticatedUse
 
         new_msg = result.data[0]
 
-        room_info = (
-            supabase.table("chat_rooms")
-            .select("type, club_id")
-            .eq("id", str(room_id))
-            .single()
-            .execute()
+        # Send notifications in the background (don't block the response)
+        background_tasks.add_task(
+            _send_message_notifications, room_id, user.id
         )
-
-        members = (
-            supabase.table("chat_room_members")
-            .select("user_id")
-            .eq("room_id", str(room_id))
-            .neq("user_id", str(user.id))
-            .execute()
-        )
-
-        actor_id = user.id
-        club_id = None
-
-        if room_info.data and room_info.data.get("club_id"):
-            club_id = room_info.data["club_id"]
-            club_data = (
-                supabase.table("clubs")
-                .select("anonymity")
-                .eq("id", str(club_id))
-                .single()
-                .execute()
-            )
-            if club_data.data and club_data.data["anonymity"] in ("PRIVATE", "BOTH"):
-                actor_id = None
-
-        for member in members.data:
-            create_notification(
-                recipient_id=UUID(member["user_id"]),
-                notification_type=NotificationType.CHAT_MESSAGE,
-                actor_id=actor_id,
-                room_id=room_id,
-                club_id=UUID(club_id) if club_id else None,
-            )
 
         sender_result = (
             supabase.table("users")
