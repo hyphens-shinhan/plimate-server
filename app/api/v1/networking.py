@@ -134,7 +134,6 @@ async def get_friend_recommendations(
     """Get friend recommendations based on friends of friends, or random users if none."""
     # Get my direct friends
     my_friend_ids = _get_my_friend_ids(str(user.id))
-
     # Get blocked user IDs
     blocked_ids = _get_blocked_user_ids(str(user.id))
 
@@ -154,7 +153,9 @@ async def get_friend_recommendations(
             }
 
     # Find friends of friends
-    friends_of_friends: dict[str, set[str]] = {}  # candidate_id -> set of mutual friend IDs
+    friends_of_friends: dict[str, set[str]] = (
+        {}
+    )  # candidate_id -> set of mutual friend IDs
 
     for friend_id in my_friend_ids:
         # Get this friend's friends as requester
@@ -197,6 +198,38 @@ async def get_friend_recommendations(
                     friends_of_friends[candidate_id] = set()
                 friends_of_friends[candidate_id].add(friend_id)
 
+    # Batch-fetch follow statuses for all candidate users
+    def _get_follow_statuses(candidate_ids: list[str]) -> dict[str, str]:
+        """Return {candidate_id: status} for any existing follow relationship."""
+        if not candidate_ids:
+            return {}
+
+        # Requests sent BY current user TO candidates
+        sent = (
+            supabase.table("follows")
+            .select("receiver_id, status")
+            .eq("requester_id", str(user.id))
+            .in_("receiver_id", candidate_ids)
+            .execute()
+        )
+        # Requests sent BY candidates TO current user
+        received = (
+            supabase.table("follows")
+            .select("requester_id, status")
+            .eq("receiver_id", str(user.id))
+            .in_("requester_id", candidate_ids)
+            .execute()
+        )
+
+        statuses: dict[str, str] = {}
+        for row in sent.data or []:
+            statuses[row["receiver_id"]] = row["status"]
+        for row in received.data or []:
+            cid = row["requester_id"]
+            if cid not in statuses:
+                statuses[cid] = row["status"]
+        return statuses
+
     recommendations = []
 
     if friends_of_friends:
@@ -209,12 +242,20 @@ async def get_friend_recommendations(
             .execute()
         )
 
+        # Batch-fetch follow statuses for candidates
+        follow_statuses = _get_follow_statuses(candidate_ids)
+
         # Build recommendations from friends of friends
         for row in users_result.data or []:
             user_id = str(row["id"])
             mutual_friend_ids = list(friends_of_friends.get(user_id, set()))[:3]
-            mutual_friends_list = [friend_info.get(fid, {}).get("name", "Unknown") for fid in mutual_friend_ids]
-            mutual_friends_avatars = [friend_info.get(fid, {}).get("avatar_url") for fid in mutual_friend_ids]
+            mutual_friends_list = [
+                friend_info.get(fid, {}).get("name", "Unknown")
+                for fid in mutual_friend_ids
+            ]
+            mutual_friends_avatars = [
+                friend_info.get(fid, {}).get("avatar_url") for fid in mutual_friend_ids
+            ]
             # Filter out None avatars
             mutual_friends_avatars = [a for a in mutual_friends_avatars if a]
 
@@ -227,7 +268,10 @@ async def get_friend_recommendations(
                     affiliation=profile.get("affiliation"),
                     mutual_friends_count=len(friends_of_friends.get(user_id, set())),
                     mutual_friends=mutual_friends_list if mutual_friends_list else None,
-                    mutual_friends_avatars=mutual_friends_avatars if mutual_friends_avatars else None,
+                    mutual_friends_avatars=(
+                        mutual_friends_avatars if mutual_friends_avatars else None
+                    ),
+                    follow_status=follow_statuses.get(user_id),
                 )
             )
 
@@ -244,6 +288,13 @@ async def get_friend_recommendations(
             .execute()
         )
 
+        random_candidate_ids = [
+            str(row["id"])
+            for row in random_users_result.data or []
+            if str(row["id"]) not in exclude_ids
+        ]
+        follow_statuses = _get_follow_statuses(random_candidate_ids)
+
         for row in random_users_result.data or []:
             if str(row["id"]) in exclude_ids:
                 continue
@@ -258,6 +309,7 @@ async def get_friend_recommendations(
                     mutual_friends_count=0,
                     mutual_friends=None,
                     mutual_friends_avatars=None,
+                    follow_status=follow_statuses.get(str(row["id"])),
                 )
             )
 

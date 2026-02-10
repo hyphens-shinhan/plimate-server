@@ -21,6 +21,7 @@ class RecommendedUserCard(NetworkingUserCard):
     mutual_friends_count: int
     mutual_friends: list[str] | None = None
     mutual_friends_avatars: list[str] | None = None
+    follow_status: str | None = None
 
 
 class FriendCard(NetworkingUserCard):
