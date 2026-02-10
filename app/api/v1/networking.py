@@ -137,6 +137,25 @@ async def get_friend_recommendations(
     # Get blocked user IDs
     blocked_ids = _get_blocked_user_ids(str(user.id))
 
+    # Exclude users with PENDING follow requests in either direction
+    pending_sent = (
+        supabase.table("follows")
+        .select("receiver_id")
+        .eq("requester_id", str(user.id))
+        .eq("status", "PENDING")
+        .execute()
+    )
+    pending_received = (
+        supabase.table("follows")
+        .select("requester_id")
+        .eq("receiver_id", str(user.id))
+        .eq("status", "PENDING")
+        .execute()
+    )
+    pending_ids = {row["receiver_id"] for row in pending_sent.data or []} | {
+        row["requester_id"] for row in pending_received.data or []
+    }
+
     # Get friend names and avatars for mutual friends display
     friend_info: dict[str, dict] = {}  # friend_id -> {name, avatar_url}
     if my_friend_ids:
@@ -182,6 +201,7 @@ async def get_friend_recommendations(
                 candidate_id != str(user.id)
                 and candidate_id not in my_friend_ids
                 and candidate_id not in blocked_ids
+                and candidate_id not in pending_ids
             ):
                 if candidate_id not in friends_of_friends:
                     friends_of_friends[candidate_id] = set()
@@ -193,6 +213,7 @@ async def get_friend_recommendations(
                 candidate_id != str(user.id)
                 and candidate_id not in my_friend_ids
                 and candidate_id not in blocked_ids
+                and candidate_id not in pending_ids
             ):
                 if candidate_id not in friends_of_friends:
                     friends_of_friends[candidate_id] = set()
@@ -279,7 +300,7 @@ async def get_friend_recommendations(
         recommendations.sort(key=lambda u: u.mutual_friends_count, reverse=True)
     else:
         # No mutual friends - return random users (excluding admins, self, friends, blocked)
-        exclude_ids = list(blocked_ids | my_friend_ids | {str(user.id)})
+        exclude_ids = list(blocked_ids | my_friend_ids | pending_ids | {str(user.id)})
 
         random_users_result = (
             supabase.table("users")
