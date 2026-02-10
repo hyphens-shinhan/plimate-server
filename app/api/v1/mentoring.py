@@ -35,6 +35,10 @@ _WEIGHTS = {
 
 _MIN_MATCH_SCORE = 0.3
 
+# New mentor boost: mentors with fewer active mentees get a score bonus
+_NEW_MENTOR_BOOST = 0.10  # max 10% boost
+_MENTEE_CAP = 5  # at this many active mentees, boost = 0
+
 
 def _compute_match_score(
     mentee: dict, mentor: dict
@@ -63,12 +67,14 @@ def _compute_match_score(
     slots_score = (
         len(mentee_slots & mentor_slots) / len(mentee_slots) if mentee_slots else 0.0
     )
-
-    # Fields: Jaccard similarity (symmetric)
+    # Step 1 — Fields: mentee-coverage ratio
+    # Measures how many of the mentee's desired fields the mentor covers.
+    # A mentor with extra fields is not penalized (unlike Jaccard).
     mentee_fields = set(mentee["fields"] or [])
     mentor_fields = set(mentor.get("fields") or [])
-    union = mentee_fields | mentor_fields
-    fields_score = len(mentee_fields & mentor_fields) / len(union) if union else 0.0
+    fields_score = (
+        len(mentee_fields & mentor_fields) / len(mentee_fields) if mentee_fields else 0.0
+    )
 
     # Frequency: mentee single value IN mentor's accepted list
     mentor_freq = set(mentor.get("frequency") or [])
@@ -373,7 +379,7 @@ async def search_mentors(
     )
 
     if search:
-        query = query.ilike("name", f"%{search}%")
+        query = query.ilike("name", f"*{search}*")
 
     all_mentors = query.execute()
 
@@ -502,7 +508,22 @@ async def get_mentor_recommendations(
     if not mentors_result.data:
         return MentorRecommendationsResponse(recommendations=[], total=0)
 
-    # 3. Score each mentor who has matching fields filled in
+    # 3. Count active mentees per mentor (ACCEPTED requests)
+    mentor_ids = [row["id"] for row in mentors_result.data]
+    active_requests = (
+        supabase.table("mentoring_requests")
+        .select("mentor_id")
+        .in_("mentor_id", mentor_ids)
+        .eq("status", "ACCEPTED")
+        .execute()
+    )
+    # Build count map: mentor_id -> number of active mentees
+    mentee_count: dict[str, int] = {}
+    for req in active_requests.data or []:
+        mid = req["mentor_id"]
+        mentee_count[mid] = mentee_count.get(mid, 0) + 1
+
+    # 4. Score each mentor who has matching fields filled in
     scored: list[tuple[float, MentorRecommendationCard]] = []
 
     for row in mentors_result.data:
@@ -518,6 +539,11 @@ async def get_mentor_recommendations(
         if total < _MIN_MATCH_SCORE:
             continue
 
+        # Apply new mentor boost: fewer active mentees → higher boost
+        active = mentee_count.get(row["id"], 0)
+        boost = _NEW_MENTOR_BOOST * max(0.0, 1.0 - active / _MENTEE_CAP)
+        boosted_score = min(1.0, total + boost)
+
         card = MentorRecommendationCard(
             mentor_id=row["id"],
             name=row["name"],
@@ -525,12 +551,12 @@ async def get_mentor_recommendations(
             introduction=details.get("introduction"),
             affiliation=details.get("affiliation"),
             expertise=details.get("expertise"),
-            match_score=total,
+            match_score=boosted_score,
             score_breakdown=breakdown,
         )
-        scored.append((total, card))
+        scored.append((boosted_score, card))
 
-    # 4. Sort by score descending, paginate
+    # 5. Sort by score descending, paginate
     scored.sort(key=lambda x: x[0], reverse=True)
     total_count = len(scored)
     page = scored[offset : offset + limit]
