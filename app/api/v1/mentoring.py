@@ -383,8 +383,21 @@ async def search_mentors(
 
     all_mentors = query.execute()
 
+    # Exclude mentors with ACCEPTED or PENDING follow relationship
+    follow_result = (
+        supabase.table("follows")
+        .select("receiver_id")
+        .eq("requester_id", str(user.id))
+        .in_("status", ["ACCEPTED", "PENDING"])
+        .execute()
+    )
+    exclude_ids = {row["receiver_id"] for row in follow_result.data or []}
+
     results: list[MentorSearchCard] = []
     for row in all_mentors.data or []:
+        if str(row["id"]) in exclude_ids:
+            continue
+
         details = row.get("mentor_details")
         if not details:
             continue
