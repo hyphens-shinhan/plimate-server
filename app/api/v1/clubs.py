@@ -508,7 +508,7 @@ async def get_club_members(
     try:
         club = (
             supabase.table("clubs")
-            .select("id")
+            .select("id, anonymity")
             .eq("id", str(club_id))
             .single()
             .execute()
@@ -517,10 +517,13 @@ async def get_club_members(
         if not club.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
+        anonymity = club.data.get("anonymity", "PUBLIC")
+
         result = (
             supabase.table("club_members")
             .select(
-                "user_id, users!club_members_user_id_fkey(id, name, avatar_url)",
+                "user_id, member_nickname, member_avatar_url, "
+                "users!club_members_user_id_fkey(id, name, avatar_url)",
                 count=CountMethod.exact,
             )
             .eq("club_id", str(club_id))
@@ -532,11 +535,15 @@ async def get_club_members(
         members = []
         for row in result.data:
             if user_data := row.get("users"):
+                use_alias = (
+                    anonymity in ("PRIVATE", "BOTH")
+                    and row.get("member_nickname")
+                )
                 members.append(
                     ClubMember(
                         id=user_data["id"],
-                        name=user_data["name"],
-                        avatar_url=user_data.get("avatar_url"),
+                        name=row["member_nickname"] if use_alias else user_data["name"],
+                        avatar_url=row.get("member_avatar_url") if use_alias else user_data.get("avatar_url"),
                     )
                 )
 
