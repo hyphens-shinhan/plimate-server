@@ -24,50 +24,57 @@ from app.schemas.notification import NotificationType
 
 router = APIRouter(prefix="/mentoring", tags=["mentoring"])
 
-# Weights for each matching dimension
+# Weights for each matching dimension (availability excluded — hard constraint)
 _WEIGHTS = {
-    "fields": 0.25,
-    "frequency": 0.10,
-    "available_days": 0.15,
-    "time_slots": 0.15,
-    "methods": 0.10,
-    "communication_styles": 0.15,
-    "mentoring_focuses": 0.10,
+    "fields": 0.35,
+    "frequency": 0.15,
+    "methods": 0.15,
+    "communication_styles": 0.20,
+    "mentoring_focuses": 0.15,
 }
+
+_MIN_MATCH_SCORE = 0.3
 
 
 def _compute_match_score(
     mentee: dict, mentor: dict
-) -> tuple[float, MatchScoreBreakdown]:
+) -> tuple[float, MatchScoreBreakdown] | None:
     """Compute weighted match score between a mentee survey and a mentor profile.
 
-    Returns (total_score, breakdown) where total_score is 0.0-1.0.
+    Returns (total_score, breakdown) where total_score is 0.0-1.0,
+    or None if the mentor fails the availability hard constraint.
     """
-    # Step 1 — Fields: Jaccard similarity (symmetric)
+    # Hard constraint — Available days: must have at least one overlap
+    mentee_days = set(mentee["available_days"] or [])
+    mentor_days = set(mentor.get("available_days") or [])
+    if mentee_days and not (mentee_days & mentor_days):
+        return None
+
+    # Hard constraint — Time slots: must have at least one overlap
+    mentee_slots = set(mentee["time_slots"] or [])
+    mentor_slots = set(mentor.get("time_slots") or [])
+    if mentee_slots and not (mentee_slots & mentor_slots):
+        return None
+
+    # Availability scores (kept in breakdown for display, not in weighted total)
+    days_score = (
+        len(mentee_days & mentor_days) / len(mentee_days) if mentee_days else 0.0
+    )
+    slots_score = (
+        len(mentee_slots & mentor_slots) / len(mentee_slots) if mentee_slots else 0.0
+    )
+
+    # Fields: Jaccard similarity (symmetric)
     mentee_fields = set(mentee["fields"] or [])
     mentor_fields = set(mentor.get("fields") or [])
     union = mentee_fields | mentor_fields
     fields_score = len(mentee_fields & mentor_fields) / len(union) if union else 0.0
 
-    # Step 2 — Frequency: mentee single value IN mentor's accepted list
+    # Frequency: mentee single value IN mentor's accepted list
     mentor_freq = set(mentor.get("frequency") or [])
     frequency_score = 1.0 if mentee["frequency"] in mentor_freq else 0.0
 
-    # Step 4 — Available days: mentee-coverage ratio
-    mentee_days = set(mentee["available_days"] or [])
-    mentor_days = set(mentor.get("available_days") or [])
-    days_score = (
-        len(mentee_days & mentor_days) / len(mentee_days) if mentee_days else 0.0
-    )
-
-    # Step 5 — Time slots: mentee-coverage ratio
-    mentee_slots = set(mentee["time_slots"] or [])
-    mentor_slots = set(mentor.get("time_slots") or [])
-    slots_score = (
-        len(mentee_slots & mentor_slots) / len(mentee_slots) if mentee_slots else 0.0
-    )
-
-    # Step 6 — Methods: FLEXIBLE acts as wildcard, binary overlap
+    # Methods: FLEXIBLE acts as wildcard, binary overlap
     mentee_methods = set(mentee["methods"] or [])
     mentor_methods = set(mentor.get("methods") or [])
     if "FLEXIBLE" in mentee_methods or "FLEXIBLE" in mentor_methods:
@@ -75,7 +82,7 @@ def _compute_match_score(
     else:
         methods_score = 1.0 if mentee_methods & mentor_methods else 0.0
 
-    # Step 7A — Communication styles: mentee-coverage ratio
+    # Communication styles: mentee-coverage ratio
     mentee_styles = set(mentee["communication_styles"] or [])
     mentor_styles = set(mentor.get("communication_styles") or [])
     styles_score = (
@@ -84,7 +91,7 @@ def _compute_match_score(
         else 0.0
     )
 
-    # Step 7B — Mentoring focuses: mentee-coverage ratio
+    # Mentoring focuses: mentee-coverage ratio
     mentee_focuses = set(mentee["mentoring_focuses"] or [])
     mentor_focuses = set(mentor.get("mentoring_focuses") or [])
     focuses_score = (
@@ -503,7 +510,13 @@ async def get_mentor_recommendations(
         if not details or not details.get("fields"):
             continue
 
-        total, breakdown = _compute_match_score(mentee_survey, details)
+        result = _compute_match_score(mentee_survey, details)
+        if result is None:
+            continue
+
+        total, breakdown = result
+        if total < _MIN_MATCH_SCORE:
+            continue
 
         card = MentorRecommendationCard(
             mentor_id=row["id"],
