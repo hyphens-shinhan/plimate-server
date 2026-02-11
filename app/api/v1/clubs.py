@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status, Query
-from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -126,7 +125,7 @@ async def get_clubs(
     offset: int = Query(0, ge=0),
 ):
     try:
-        query = supabase.table("clubs").select("*", count=CountMethod.exact)
+        query = supabase.table("clubs").select("*", count="exact")
 
         if category:
             query = query.eq("category", category.value)
@@ -446,7 +445,7 @@ async def get_gallery_images(
     try:
         result = (
             supabase.table("club_gallery")
-            .select("*", count=CountMethod.exact)
+            .select("*", count="exact")
             .eq("club_id", str(club_id))
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
@@ -525,7 +524,7 @@ async def get_club_members(
             .select(
                 "user_id, member_nickname, member_avatar_url, "
                 "users!club_members_user_id_fkey(id, name, avatar_url)",
-                count=CountMethod.exact,
+                count="exact",
             )
             .eq("club_id", str(club_id))
             .order("joined_at", desc=False)

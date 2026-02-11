@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -15,9 +16,11 @@ from app.schemas.mentoring import (
     MentorRecommendationsResponse,
     MentorSearchCard,
     MentorSearchResponse,
+    MentorStatsResponse,
     MentoringRequestCreate,
     MentoringRequestListResponse,
     MentoringRequestResponse,
+    MentoringRequestScheduleUpdate,
     RequestUserInfo,
 )
 from app.schemas.notification import NotificationType
@@ -231,16 +234,17 @@ async def update_mentor_profile(
     user: AuthenticatedUser,
 ):
     """Update the current mentor's matching profile fields."""
-    # Verify user is a mentor
+    # Use same source as GET /users/me so role is consistent
     user_result = (
-        supabase.table("users")
+        supabase.table("users_with_email")
         .select("id, name, avatar_url, role")
         .eq("id", str(user.id))
-        .single()
+        .maybe_single()
         .execute()
     )
 
-    if not user_result.data or user_result.data["role"] != "MENTOR":
+    user_data = (user_result.data if user_result else None) or {}
+    if not user_data or user_data.get("role") != "MENTOR":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only mentors can update a mentor profile.",
@@ -300,8 +304,8 @@ async def update_mentor_profile(
     row = result.data[0]
     return MentorProfileResponse(
         user_id=row["user_id"],
-        name=user_result.data["name"],
-        avatar_url=user_result.data.get("avatar_url"),
+        name=user_data["name"],
+        avatar_url=user_data.get("avatar_url"),
         introduction=row.get("introduction"),
         affiliation=row.get("affiliation"),
         expertise=row.get("expertise"),
@@ -318,8 +322,9 @@ async def update_mentor_profile(
 @router.get("/profile/me", response_model=MentorProfileResponse)
 async def get_my_mentor_profile(user: AuthenticatedUser):
     """Get the current mentor's profile."""
+    # Use same source as GET /users/me so role is consistent (users table can differ by env)
     user_result = (
-        supabase.table("users")
+        supabase.table("users_with_email")
         .select("id, name, avatar_url, role")
         .eq("id", str(user.id))
         .maybe_single()
@@ -356,6 +361,62 @@ async def get_my_mentor_profile(user: AuthenticatedUser):
         methods=row.get("methods"),
         communication_styles=row.get("communication_styles"),
         mentoring_focuses=row.get("mentoring_focuses"),
+    )
+
+
+@router.get("/stats", response_model=MentorStatsResponse)
+async def get_mentor_stats(user: AuthenticatedUser):
+    """Get mentor dashboard stats: upcoming meetings, total mentoring hours, response rate."""
+    # Use same source as GET /users/me so role is consistent (users table can differ by env)
+    user_result = (
+        supabase.table("users_with_email")
+        .select("id, role")
+        .eq("id", str(user.id))
+        .maybe_single()
+        .execute()
+    )
+    if not user_result or not user_result.data or user_result.data.get("role") != "MENTOR":
+        return MentorStatsResponse(upcoming_meetings=0, total_hours=0.0, response_rate=0)
+
+    mentor_id = str(user.id)
+    upcoming_meetings = 0
+    total_minutes = 0
+
+    try:
+        meetings = (
+            supabase.table("mentor_meetings")
+            .select("scheduled_at, completed_at, duration_minutes")
+            .eq("mentor_id", mentor_id)
+            .execute()
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        meeting_rows = (meetings.data if meetings else None) or []
+        for row in meeting_rows:
+            if row.get("completed_at") is not None:
+                total_minutes += row.get("duration_minutes") or 0
+            elif row.get("scheduled_at") and row["scheduled_at"] >= now_iso:
+                upcoming_meetings += 1
+    except Exception:
+        pass
+
+    total_hours = round(total_minutes / 60.0, 1)
+
+    requests = (
+        supabase.table("mentoring_requests")
+        .select("status")
+        .eq("mentor_id", mentor_id)
+        .execute()
+    )
+    req_list = (requests.data if requests else None) or []
+    total_requests = len(req_list)
+    responded = sum(1 for r in req_list if r.get("status") in ("ACCEPTED", "REJECTED"))
+    response_rate = round((responded / total_requests * 100)) if total_requests else 0
+    response_rate = min(100, max(0, response_rate))
+
+    return MentorStatsResponse(
+        upcoming_meetings=upcoming_meetings,
+        total_hours=total_hours,
+        response_rate=response_rate,
     )
 
 
@@ -441,7 +502,7 @@ async def get_mentor_detail(
 ):
     """Get a specific mentor's full profile."""
     user_result = (
-        supabase.table("users")
+        supabase.table("users_with_email")
         .select("id, name, avatar_url, role")
         .eq("id", str(mentor_id))
         .eq("role", "MENTOR")
@@ -593,8 +654,10 @@ async def get_mentor_recommendations(
 
 def _build_request_response(req: dict, users_map: dict) -> MentoringRequestResponse:
     """Build a MentoringRequestResponse from a request row and a users lookup map."""
-    mentee_data = users_map.get(req["mentee_id"], {})
-    mentor_data = users_map.get(req["mentor_id"], {})
+    mentee_id = str(req["mentee_id"]) if req.get("mentee_id") else ""
+    mentor_id = str(req["mentor_id"]) if req.get("mentor_id") else ""
+    mentee_data = users_map.get(mentee_id, {})
+    mentor_data = users_map.get(mentor_id, {})
 
     return MentoringRequestResponse(
         id=req["id"],
@@ -611,6 +674,11 @@ def _build_request_response(req: dict, users_map: dict) -> MentoringRequestRespo
         message=req.get("message"),
         status=req["status"],
         created_at=req["created_at"],
+        preferred_date=req.get("preferred_date"),
+        preferred_time=req.get("preferred_time"),
+        preferred_meeting_method=req.get("preferred_meeting_method"),
+        scheduled_at=req.get("scheduled_at"),
+        meeting_method=req.get("meeting_method"),
     )
 
 
@@ -657,15 +725,21 @@ async def create_mentoring_request(
         )
 
     # Create request
+    insert_data: dict = {
+        "mentee_id": str(user.id),
+        "mentor_id": str(body.mentor_id),
+        "message": body.message,
+    }
+    if body.preferred_date is not None:
+        insert_data["preferred_date"] = body.preferred_date.isoformat()[:10]
+    if body.preferred_time is not None:
+        insert_data["preferred_time"] = body.preferred_time
+    if body.preferred_meeting_method is not None:
+        insert_data["preferred_meeting_method"] = body.preferred_meeting_method
+
     result = (
         supabase.table("mentoring_requests")
-        .insert(
-            {
-                "mentee_id": str(user.id),
-                "mentor_id": str(body.mentor_id),
-                "message": body.message,
-            }
-        )
+        .insert(insert_data)
         .execute()
     )
 
@@ -682,18 +756,18 @@ async def create_mentoring_request(
         actor_id=user.id,
     )
 
-    # Build response
+    # Build response (use users_with_email for consistency with /users/me)
     mentee_result = (
-        supabase.table("users")
+        supabase.table("users_with_email")
         .select("id, name, avatar_url")
         .eq("id", str(user.id))
-        .single()
+        .maybe_single()
         .execute()
     )
 
     users_map = {
-        str(user.id): mentee_result.data or {},
-        str(body.mentor_id): mentor_result.data,
+        str(user.id): (mentee_result.data if mentee_result else None) or {},
+        str(body.mentor_id): mentor_result.data or {},
     }
 
     return _build_request_response(result.data[0], users_map)
@@ -716,22 +790,23 @@ async def get_sent_requests(
         query = query.eq("status", status_filter)
 
     result = query.execute()
-    requests = result.data or []
+    requests = (result.data if result else None) or []
 
     if not requests:
         return MentoringRequestListResponse(requests=[], total=0)
 
-    # Batch fetch user info
+    # Batch fetch user info (use users_with_email for consistency with /users/me)
     user_ids = list(
-        {r["mentee_id"] for r in requests} | {r["mentor_id"] for r in requests}
+        {str(r["mentee_id"]) for r in requests} | {str(r["mentor_id"]) for r in requests}
     )
     users_result = (
-        supabase.table("users")
+        supabase.table("users_with_email")
         .select("id, name, avatar_url")
         .in_("id", user_ids)
         .execute()
     )
-    users_map = {row["id"]: row for row in users_result.data or []}
+    raw_users = (users_result.data if users_result else None) or []
+    users_map = {str(row["id"]): row for row in raw_users}
 
     return MentoringRequestListResponse(
         requests=[_build_request_response(r, users_map) for r in requests],
@@ -756,22 +831,24 @@ async def get_received_requests(
         query = query.eq("status", status_filter)
 
     result = query.execute()
-    requests = result.data or []
+    requests = (result.data if result else None) or []
 
     if not requests:
         return MentoringRequestListResponse(requests=[], total=0)
 
-    # Batch fetch user info
+    # Batch fetch user info (use users_with_email for consistency with /users/me)
     user_ids = list(
-        {r["mentee_id"] for r in requests} | {r["mentor_id"] for r in requests}
+        {str(r["mentee_id"]) for r in requests} | {str(r["mentor_id"]) for r in requests}
     )
     users_result = (
-        supabase.table("users")
+        supabase.table("users_with_email")
         .select("id, name, avatar_url")
         .in_("id", user_ids)
         .execute()
     )
-    users_map = {row["id"]: row for row in users_result.data or []}
+    # Normalize user id keys to str so lookup works regardless of UUID/str from DB
+    raw_users = (users_result.data if users_result else None) or []
+    users_map = {str(row["id"]): row for row in raw_users}
 
     return MentoringRequestListResponse(
         requests=[_build_request_response(r, users_map) for r in requests],
@@ -862,3 +939,94 @@ async def reject_mentoring_request(
     ).execute()
 
     return {"message": "Mentoring request rejected"}
+
+
+@router.patch(
+    "/requests/{request_id}",
+    response_model=MentoringRequestResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_mentoring_request_schedule(
+    request_id: UUID,
+    body: MentoringRequestScheduleUpdate,
+    user: AuthenticatedUser,
+):
+    """Set or update meeting schedule (mentor only, ACCEPTED requests only)."""
+    existing = (
+        supabase.table("mentoring_requests")
+        .select("*")
+        .eq("id", str(request_id))
+        .single()
+        .execute()
+    )
+
+    if not existing.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found.",
+        )
+
+    if existing.data["mentor_id"] != str(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the mentor can update this request.",
+        )
+
+    if existing.data["status"] != "ACCEPTED":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Schedule can only be set for accepted requests.",
+        )
+
+    update_data: dict = {}
+    if body.scheduled_at is not None:
+        update_data["scheduled_at"] = body.scheduled_at.isoformat()
+    if body.meeting_method is not None:
+        update_data["meeting_method"] = body.meeting_method
+
+    if not update_data:
+        return _build_request_response(
+            existing.data,
+            {
+                existing.data["mentee_id"]: (
+                    supabase.table("users")
+                    .select("id, name, avatar_url")
+                    .eq("id", existing.data["mentee_id"])
+                    .single()
+                    .execute()
+                ).data
+                or {},
+                existing.data["mentor_id"]: (
+                    supabase.table("users")
+                    .select("id, name, avatar_url")
+                    .eq("id", existing.data["mentor_id"])
+                    .single()
+                    .execute()
+                ).data
+                or {},
+            },
+        )
+
+    result = (
+        supabase.table("mentoring_requests")
+        .update(update_data)
+        .eq("id", str(request_id))
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update schedule",
+        )
+
+    user_ids = [existing.data["mentee_id"], existing.data["mentor_id"]]
+    users_result = (
+        supabase.table("users_with_email")
+        .select("id, name, avatar_url")
+        .in_("id", user_ids)
+        .execute()
+    )
+    raw_users = (users_result.data if users_result else None) or []
+    users_map = {str(row["id"]): row for row in raw_users}
+    return _build_request_response(result.data[0], users_map)

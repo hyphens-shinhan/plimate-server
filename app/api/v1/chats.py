@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
-from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -504,7 +503,7 @@ async def get_chat_rooms(user: AuthenticatedUser):
             last_read = last_read_map.get(room["id"])
             unread_query = (
                 supabase.table("chat_messages")
-                .select("id", count=CountMethod.exact)
+                .select("id", count="exact")
                 .eq("room_id", room["id"])
                 .neq("sender_id", str(user.id))
             )

@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -120,7 +119,7 @@ async def list_grades(
     try:
         query = (
             supabase.table("semester_grades")
-            .select("*", count=CountMethod.exact)
+            .select("*", count="exact")
             .eq("user_id", str(user.id))
         )
 

@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status, Query
-from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -250,7 +249,7 @@ async def get_comments(
             supabase.table("post_comments")
             .select(
                 "*, users!post_comments_author_id_fkey(id, name, avatar_url)",
-                count=CountMethod.exact,
+                count="exact",
             )
             .eq("post_id", str(post_id))
             .is_("parent_id", "null")

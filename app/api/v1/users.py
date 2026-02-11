@@ -23,21 +23,34 @@ from app.schemas.user import (
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+def _normalize_profile(profile: dict | list | None) -> dict:
+    """Supabase can return nested relations as object or array; normalize to dict."""
+    if profile is None:
+        return {}
+    if isinstance(profile, list):
+        return profile[0] if profile else {}
+    return profile
+
+
 @router.get("/me", response_model=UserHomeProfile)
 async def get_current_user_home_profile(user: AuthenticatedUser):
+    """Use same data source as /me/profile so mentor and all roles get consistent response."""
     try:
         result = (
-            supabase.table("users")
-            .select(
-                "id, name, avatar_url, role, user_profiles(affiliation, major, scholarship_type, scholarship_batch)"
-            )
+            supabase.table("users_with_email")
+            .select("id, name, avatar_url, role, user_profiles(affiliation, major, scholarship_type, scholarship_batch)")
             .eq("id", str(user.id))
             .single()
             .execute()
         )
 
         data = result.data
-        profile = data.pop("user_profiles", {}) or {}
+        if not data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            )
+        raw_profile = data.pop("user_profiles", None)
+        profile = _normalize_profile(raw_profile)
 
         return UserHomeProfile(
             id=data["id"],
@@ -49,6 +62,8 @@ async def get_current_user_home_profile(user: AuthenticatedUser):
             scholarship_type=profile.get("scholarship_type"),
             scholarship_batch=profile.get("scholarship_batch"),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -67,7 +82,12 @@ async def get_current_user_my_profile(user: AuthenticatedUser):
         )
 
         data = result.data
-        profile = data.pop("user_profiles", {}) or {}
+        if not data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            )
+        raw_profile = data.pop("user_profiles", None)
+        profile = _normalize_profile(raw_profile)
 
         return UserMyProfile(
             id=data["id"],
@@ -87,6 +107,8 @@ async def get_current_user_my_profile(user: AuthenticatedUser):
             address=profile.get("address"),
             volunteer_hours=profile.get("volunteer_hours", 0),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
@@ -304,11 +326,12 @@ async def get_user_public_profile(user_id: str, user: AuthenticatedUser):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
     data = result.data
-    profile = data.pop("user_profiles", {}) or {}
+    raw_profile = data.pop("user_profiles", None)
+    profile = _normalize_profile(raw_profile)
 
-    is_location_public = profile["is_location_public"]
-    is_contact_public = profile["is_contact_public"]
-    is_scholarship_public = profile["is_scholarship_public"]
+    is_location_public = profile.get("is_location_public", False)
+    is_contact_public = profile.get("is_contact_public", False)
+    is_scholarship_public = profile.get("is_scholarship_public", False)
 
     # Check follow relationship in both directions
     follow_status = None

@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -156,7 +155,7 @@ async def list_my_reports(
     try:
         query = (
             supabase.table("academic_reports")
-            .select("*", count=CountMethod.exact)
+            .select("*", count="exact")
             .eq("user_id", str(user.id))
         )
 
@@ -482,7 +481,7 @@ async def list_user_reports(
     try:
         result = (
             supabase.table("academic_reports")
-            .select("*", count=CountMethod.exact)
+            .select("*", count="exact")
             .eq("user_id", str(user_id))
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)

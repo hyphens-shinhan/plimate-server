@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status, Query
-from postgrest import CountMethod
 
 from app.core.config import settings
 from app.core.database import supabase
@@ -53,7 +52,7 @@ async def get_notifications(
             supabase.table("notifications")
             .select(
                 "*, users!notifications_actor_id_fkey(id, name, avatar_url)",
-                count=CountMethod.exact,
+                count="exact",
             )
             .eq("recipient_id", str(user.id))
         )
@@ -69,7 +68,7 @@ async def get_notifications(
 
         unread_result = (
             supabase.table("notifications")
-            .select("id", count=CountMethod.exact)
+            .select("id", count="exact")
             .eq("recipient_id", str(user.id))
             .eq("is_read", False)
             .execute()

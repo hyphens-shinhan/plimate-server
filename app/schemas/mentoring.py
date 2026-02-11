@@ -178,6 +178,15 @@ class RequestStatus(str, Enum):
 class MentoringRequestCreate(BaseModel):
     mentor_id: UUID
     message: str | None = Field(None, max_length=1000)
+    preferred_date: datetime | None = None
+    preferred_time: str | None = Field(None, max_length=20)
+    preferred_meeting_method: str | None = Field(None, max_length=20)
+
+
+class MentoringRequestScheduleUpdate(BaseModel):
+    """Mentor sets/edits meeting schedule (for ACCEPTED requests only)."""
+    scheduled_at: datetime | None = None
+    meeting_method: str | None = Field(None, max_length=20)
 
 
 class RequestUserInfo(BaseModel):
@@ -193,8 +202,24 @@ class MentoringRequestResponse(BaseModel):
     message: str | None = None
     status: RequestStatus
     created_at: datetime
+    preferred_date: datetime | None = None
+    preferred_time: str | None = None
+    preferred_meeting_method: str | None = None
+    scheduled_at: datetime | None = None
+    meeting_method: str | None = None
 
 
 class MentoringRequestListResponse(BaseModel):
     requests: list[MentoringRequestResponse]
     total: int
+
+
+# ------------------------------------------------------------------
+# Mentor dashboard stats (다가오는 미팅, 총 멘토링 시간, 응답률)
+# ------------------------------------------------------------------
+
+
+class MentorStatsResponse(BaseModel):
+    upcoming_meetings: int = 0
+    total_hours: float = 0.0
+    response_rate: int = 0  # 0–100

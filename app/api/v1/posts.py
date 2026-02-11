@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status, Query
-from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -295,7 +294,7 @@ async def get_feed_posts(
             supabase.table("posts")
             .select(
                 "*, users!posts_author_id_fkey(id, name, avatar_url)",
-                count=CountMethod.exact,
+                count="exact",
             )
             .eq("type", PostType.FEED.value)
             .order("created_at", desc=True)
@@ -384,7 +383,7 @@ async def get_feed_anonymous_posts(
             supabase.table("posts")
             .select(
                 "*, users!posts_author_id_fkey(id, name, avatar_url)",
-                count=CountMethod.exact,
+                count="exact",
             )
             .eq("type", PostType.FEED.value)
             .eq("is_anonymous", True)
@@ -571,7 +570,7 @@ async def get_notice_posts(
             supabase.table("posts")
             .select(
                 "*, users!posts_author_id_fkey(id, name, avatar_url)",
-                count=CountMethod.exact,
+                count="exact",
             )
             .eq("type", PostType.NOTICE.value)
             .order("is_pinned", desc=True)
@@ -738,7 +737,7 @@ async def get_event_posts(
             supabase.table("posts")
             .select(
                 "*, users!posts_author_id_fkey(id, name, avatar_url)",
-                count=CountMethod.exact,
+                count="exact",
             )
             .eq("type", PostType.EVENT.value)
         )
@@ -832,7 +831,7 @@ async def get_my_applied_events(
     try:
         applications = (
             supabase.table("event_participants")
-            .select("post_id", count=CountMethod.exact)
+            .select("post_id", count="exact")
             .eq("user_id", str(user.id))
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
@@ -924,7 +923,7 @@ async def get_event_post(post_id: UUID, user: AuthenticatedUser):
 
         participants = (
             supabase.table("event_participants")
-            .select("user_id", count=CountMethod.exact)
+            .select("user_id", count="exact")
             .eq("post_id", str(post_id))
             .execute()
         )
@@ -1426,7 +1425,7 @@ async def apply_for_event(post_id: UUID, user: AuthenticatedUser):
         if post.data.get("max_participants"):
             current_count = (
                 supabase.table("event_participants")
-                .select("user_id", count=CountMethod.exact)
+                .select("user_id", count="exact")
                 .eq("post_id", str(post_id))
                 .execute()
             )
