@@ -63,6 +63,7 @@ async def create_club(club: ClubCreate, user: AuthenticatedUser):
                     "creator_id": str(user.id),
                     "name": club.name,
                     "description": club.description,
+                    "image_url": club.image_url,
                     "member_count": 0,
                     "category": club.category,
                     "anonymity": club.anonymity,

@@ -21,6 +21,7 @@ class ClubAnonymity(StrEnum):
 class ClubCreate(BaseModel):
     name: str
     description: str
+    image_url: str | None = None
 
     category: ClubCategory
     anonymity: ClubAnonymity
@@ -29,6 +30,7 @@ class ClubCreate(BaseModel):
 class ClubUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    image_url: str | None = None
     category: ClubCategory | None = None
     anonymity: ClubAnonymity | None = None
 
@@ -46,6 +48,7 @@ class ClubResponse(BaseModel):
 
     name: str
     description: str
+    image_url: str | None = None
     category: ClubCategory
     anonymity: ClubAnonymity
 
