@@ -56,6 +56,7 @@ class UserPublicProfile(BaseModel):
     hobbies: list[str] | None = None
 
     address: str | None = None
+    follow_status: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

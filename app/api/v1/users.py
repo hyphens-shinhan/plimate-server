@@ -310,6 +310,21 @@ async def get_user_public_profile(user_id: str, user: AuthenticatedUser):
     is_contact_public = profile["is_contact_public"]
     is_scholarship_public = profile["is_scholarship_public"]
 
+    # Check follow relationship in both directions
+    follow_status = None
+    follow_result = (
+        supabase.table("follows")
+        .select("status")
+        .or_(
+            f"and(requester_id.eq.{user.id},receiver_id.eq.{user_id}),"
+            f"and(requester_id.eq.{user_id},receiver_id.eq.{user.id})"
+        )
+        .limit(1)
+        .execute()
+    )
+    if follow_result.data:
+        follow_status = follow_result.data[0]["status"]
+
     return UserPublicProfile(
         id=data["id"],
         name=data["name"],
@@ -327,6 +342,7 @@ async def get_user_public_profile(user_id: str, user: AuthenticatedUser):
         interests=profile.get("interests"),
         hobbies=profile.get("hobbies"),
         address=profile.get("address") if is_location_public else None,
+        follow_status=follow_status,
     )
 
 
