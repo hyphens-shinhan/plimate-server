@@ -160,13 +160,7 @@ async def get_year_gpa(year: int, user: AuthenticatedUser):
             .execute()
         )
 
-        if not result.data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No grades found for year {year}",
-            )
-
-        grades = [SemesterGradeResponse(**g) for g in result.data]
+        grades = [SemesterGradeResponse(**g) for g in result.data or []]
 
         # Calculate GPA
         gpa_data = calculate_gpa(grades)
