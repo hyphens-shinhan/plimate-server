@@ -5,25 +5,25 @@ from app.core.push import send_push_to_user
 from app.schemas.notification import NotificationType
 
 _PUSH_TITLES = {
-    NotificationType.LIKE: "New Like",
-    NotificationType.COMMENT: "New Comment",
-    NotificationType.COMMENT_REPLY: "New Reply",
-    NotificationType.CHAT_MESSAGE: "New Message",
-    NotificationType.FOLLOW_REQUEST: "Follow Request",
-    NotificationType.FOLLOW_ACCEPT: "Follow Accepted",
-    NotificationType.MENTORING_REQUEST: "Mentoring Request",
-    NotificationType.MENTORING_ACCEPTED: "Mentoring Accepted",
+    NotificationType.LIKE: "좋아요",
+    NotificationType.COMMENT: "새 댓글",
+    NotificationType.COMMENT_REPLY: "새 답글",
+    NotificationType.CHAT_MESSAGE: "새 메시지",
+    NotificationType.FOLLOW_REQUEST: "팔로우 요청",
+    NotificationType.FOLLOW_ACCEPT: "팔로우 수락",
+    NotificationType.MENTORING_REQUEST: "멘토링 요청",
+    NotificationType.MENTORING_ACCEPTED: "멘토링 수락",
 }
 
 _PUSH_BODIES = {
-    NotificationType.LIKE: "Someone liked your post.",
-    NotificationType.COMMENT: "Someone commented on your post.",
-    NotificationType.COMMENT_REPLY: "Someone replied to your comment.",
-    NotificationType.CHAT_MESSAGE: "You have a new message.",
-    NotificationType.FOLLOW_REQUEST: "Someone wants to follow you.",
-    NotificationType.FOLLOW_ACCEPT: "Your follow request was accepted.",
-    NotificationType.MENTORING_REQUEST: "You received a mentoring request.",
-    NotificationType.MENTORING_ACCEPTED: "Your mentoring request was accepted.",
+    NotificationType.LIKE: "회원님의 게시글에 좋아요를 눌렀습니다.",
+    NotificationType.COMMENT: "회원님의 게시글에 댓글을 남겼습니다.",
+    NotificationType.COMMENT_REPLY: "회원님의 댓글에 답글을 남겼습니다.",
+    NotificationType.CHAT_MESSAGE: "새로운 메시지가 도착했습니다.",
+    NotificationType.FOLLOW_REQUEST: "회원님에게 팔로우를 요청했습니다.",
+    NotificationType.FOLLOW_ACCEPT: "회원님의 팔로우 요청을 수락했습니다.",
+    NotificationType.MENTORING_REQUEST: "새로운 멘토링 요청이 도착했습니다.",
+    NotificationType.MENTORING_ACCEPTED: "멘토링 요청이 수락되었습니다.",
 }
 
 
@@ -58,8 +58,8 @@ def create_notification(
 
     payload = {
         "type": notification_type.value,
-        "title": _PUSH_TITLES.get(notification_type, "Notification"),
-        "body": message or _PUSH_BODIES.get(notification_type, "You have a new notification."),
+        "title": _PUSH_TITLES.get(notification_type, "알림"),
+        "body": message or _PUSH_BODIES.get(notification_type, "새로운 알림이 있습니다."),
     }
     if post_id:
         payload["post_id"] = str(post_id)
