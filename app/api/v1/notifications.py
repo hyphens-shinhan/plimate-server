@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status, Query
 from postgrest import CountMethod
 
+from app.core.config import settings
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
 from app.schemas.notification import (
@@ -10,6 +11,7 @@ from app.schemas.notification import (
     NotificationActor,
     NotificationResponse,
     NotificationListResponse,
+    PushSubscriptionCreate,
 )
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -138,6 +140,49 @@ async def delete_notification(notification_id: UUID, user: AuthenticatedUser):
         return {"message": "Notification deleted"}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.get("/push/vapid-key")
+async def get_vapid_public_key(user: AuthenticatedUser):
+    return {"vapid_public_key": settings.VAPID_PUBLIC_KEY}
+
+
+@router.post("/push/subscribe", status_code=status.HTTP_201_CREATED)
+async def subscribe_to_push(
+    subscription: PushSubscriptionCreate, user: AuthenticatedUser
+):
+    try:
+        supabase.table("push_subscriptions").upsert(
+            {
+                "user_id": str(user.id),
+                "endpoint": subscription.endpoint,
+                "p256dh": subscription.p256dh,
+                "auth": subscription.auth,
+            },
+            on_conflict="endpoint",
+        ).execute()
+
+        return {"message": "Push subscription registered"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+
+@router.delete("/push/subscribe", status_code=status.HTTP_200_OK)
+async def unsubscribe_from_push(
+    subscription: PushSubscriptionCreate, user: AuthenticatedUser
+):
+    try:
+        supabase.table("push_subscriptions").delete().eq(
+            "endpoint", subscription.endpoint
+        ).eq("user_id", str(user.id)).execute()
+
+        return {"message": "Push subscription removed"}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)

@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as api_v1_router
+from pywebpush import webpush
+import py_vapid
 
 structlog.configure(
     cache_logger_on_first_use=True,

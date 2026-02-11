@@ -43,3 +43,9 @@ class NotificationListResponse(BaseModel):
     notifications: list[NotificationResponse]
     total: int
     unread_count: int
+
+
+class PushSubscriptionCreate(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
