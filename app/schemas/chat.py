@@ -41,6 +41,7 @@ class ChatRoomResponse(BaseModel):
     name: str | None
     image_url: str | None
     last_message: MessageResponse | None = None
+    unread_count: int = 0
 
 
 class ChatRoomListResponse(BaseModel):

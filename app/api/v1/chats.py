@@ -1,6 +1,8 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from postgrest import CountMethod
 
 from app.core.database import supabase
 from app.core.deps import AuthenticatedUser
@@ -101,6 +103,16 @@ async def _check_room_member(user_id: str, room_id: str):
         )
 
 
+def _mark_room_as_read(user_id: str, room_id: str) -> None:
+    """Update last_read_at to now for the given user in the given room."""
+    try:
+        supabase.table("chat_room_members").update(
+            {"last_read_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("room_id", room_id).eq("user_id", user_id).execute()
+    except Exception:
+        pass
+
+
 async def _check_club_member(user_id: str, club_id: str):
     """Verify that the user is a member of the club."""
     try:
@@ -140,7 +152,7 @@ def _resolve_club_member_identity(
 
 
 def _build_room_response(
-    room: dict, members: list[dict], last_message: dict | None = None
+    room: dict, members: list[dict], last_message: dict | None = None, unread_count: int = 0
 ) -> ChatRoomResponse:
     member_list = []
     for m in members:
@@ -171,11 +183,12 @@ def _build_room_response(
         created_at=room["created_at"],
         members=member_list,
         last_message=msg_response,
+        unread_count=unread_count,
     )
 
 
 def _build_club_room_response(
-    room: dict, club_members_data: list[dict], last_message: dict | None = None
+    room: dict, club_members_data: list[dict], last_message: dict | None = None, unread_count: int = 0
 ) -> ChatRoomResponse:
     """Build room response using club member identities."""
     member_list = []
@@ -223,6 +236,7 @@ def _build_club_room_response(
         created_at=room["created_at"],
         members=member_list,
         last_message=msg_response,
+        unread_count=unread_count,
     )
 
 
@@ -456,7 +470,7 @@ async def get_chat_rooms(user: AuthenticatedUser):
     try:
         memberships = (
             supabase.table("chat_room_members")
-            .select("room_id")
+            .select("room_id, last_read_at")
             .eq("user_id", str(user.id))
             .execute()
         )
@@ -465,6 +479,9 @@ async def get_chat_rooms(user: AuthenticatedUser):
             return ChatRoomListResponse(rooms=[])
 
         room_ids = [m["room_id"] for m in memberships.data]
+        last_read_map = {
+            m["room_id"]: m.get("last_read_at") for m in memberships.data
+        }
 
         rooms_result = (
             supabase.table("chat_rooms").select("*").in_("id", room_ids).execute()
@@ -482,6 +499,18 @@ async def get_chat_rooms(user: AuthenticatedUser):
                 .execute()
             )
             last_message = last_msg_result.data[0] if last_msg_result.data else None
+
+            # Compute unread count
+            last_read = last_read_map.get(room["id"])
+            unread_query = (
+                supabase.table("chat_messages")
+                .select("id", count=CountMethod.exact)
+                .eq("room_id", room["id"])
+                .neq("sender_id", str(user.id))
+            )
+            if last_read:
+                unread_query = unread_query.gt("sent_at", last_read)
+            unread_count = unread_query.execute().count or 0
 
             if room["type"] == ChatRoomType.GROUP.value and room.get("club_id"):
                 # Club chat: use club member identities
@@ -506,7 +535,7 @@ async def get_chat_rooms(user: AuthenticatedUser):
                 ).data or []
 
                 rooms.append(
-                    _build_club_room_response(room, club_members_data, last_message)
+                    _build_club_room_response(room, club_members_data, last_message, unread_count)
                 )
             else:
                 # DM: use real identities
@@ -517,7 +546,7 @@ async def get_chat_rooms(user: AuthenticatedUser):
                     .execute()
                 )
                 rooms.append(
-                    _build_room_response(room, members.data or [], last_message)
+                    _build_room_response(room, members.data or [], last_message, unread_count)
                 )
 
         rooms.sort(
@@ -563,6 +592,7 @@ async def get_club_chat_messages(
 
         room_id = room_result.data["id"]
         await _check_room_member(str(user.id), room_id)
+        _mark_room_as_read(str(user.id), room_id)
 
         # Fetch messages
         query = (
@@ -645,6 +675,7 @@ async def get_messages(
     Uses cursor-based pagination (pass last message ID as cursor).
     """
     await _check_room_member(str(user.id), str(room_id))
+    _mark_room_as_read(str(user.id), str(room_id))
 
     try:
         # Check if this is a club chat room
