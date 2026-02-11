@@ -254,6 +254,10 @@ async def update_mentor_profile(
         update_data["affiliation"] = profile.affiliation
     if profile.expertise is not None:
         update_data["expertise"] = profile.expertise
+    if profile.email is not None:
+        update_data["email"] = profile.email
+    if profile.address is not None:
+        update_data["address"] = profile.address
     if profile.fields is not None:
         update_data["fields"] = [f.value for f in profile.fields]
     if profile.frequency is not None:
@@ -468,6 +472,8 @@ async def get_mentor_detail(
         introduction=row.get("introduction"),
         affiliation=row.get("affiliation"),
         expertise=row.get("expertise"),
+        email=row.get("email"),
+        address=row.get("address"),
         fields=row.get("fields"),
         frequency=row.get("frequency"),
         available_days=row.get("available_days"),

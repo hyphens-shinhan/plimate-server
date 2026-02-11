@@ -118,6 +118,8 @@ class MentorProfileUpdate(BaseModel):
     introduction: str | None = None
     affiliation: str | None = None
     expertise: list[str] | None = None
+    email: str | None = None
+    address: str | None = None
     fields: list[MentorField] | None = Field(None, min_length=1)
     frequency: list[MeetingFrequency] | None = Field(None, min_length=1)
     available_days: list[AvailableDay] | None = Field(None, min_length=1)
@@ -134,6 +136,8 @@ class MentorProfileResponse(BaseModel):
     introduction: str | None = None
     affiliation: str | None = None
     expertise: list[str] | None = None
+    email: str | None = None
+    address: str | None = None
     fields: list[MentorField] | None = None
     frequency: list[MeetingFrequency] | None = None
     available_days: list[AvailableDay] | None = None
