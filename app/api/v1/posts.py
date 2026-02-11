@@ -138,6 +138,8 @@ async def create_feed_post(post: FeedPostCreate, user: AuthenticatedUser):
                     "content": post.content,
                     "is_anonymous": post.is_anonymous,
                     "scrap_count": 0,
+                    "file_urls": post.file_urls,
+                    "file_names": post.file_names,
                     "image_urls": post.image_urls,
                 }
             )
@@ -541,6 +543,7 @@ async def create_notice_post(post: NoticePostCreate, user: AuthenticatedUser):
                     "content": post.content,
                     "is_pinned": post.is_pinned,
                     "file_urls": post.file_urls,
+                    "file_names": post.file_names,
                     "image_urls": post.image_urls,
                 }
             )

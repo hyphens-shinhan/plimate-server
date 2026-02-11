@@ -37,6 +37,8 @@ class FeedPostCreate(BaseModel):
     content: str
     is_anonymous: bool
 
+    file_urls: list[str] | None = None
+    file_names: list[str] | None = None
     image_urls: list[str] | None = None
 
 
@@ -47,6 +49,7 @@ class NoticePostCreate(BaseModel):
     is_pinned: bool
 
     file_urls: list[str] | None = None
+    file_names: list[str] | None = None
     image_urls: list[str] | None = None
 
 
@@ -71,6 +74,8 @@ class EventPostCreate(BaseModel):
 class FeedPostUpdate(BaseModel):
     content: str | None = None
 
+    file_urls: list[str] | None = None
+    file_names: list[str] | None = None
     image_urls: list[str] | None = None
 
 
@@ -81,6 +86,7 @@ class NoticePostUpdate(BaseModel):
     is_pinned: bool | None = None
 
     file_urls: list[str] | None = None
+    file_names: list[str] | None = None
     image_urls: list[str] | None = None
 
 
@@ -118,6 +124,8 @@ class FeedPostResponse(BaseModel):
 
     author: PostAuthor | None = None
 
+    file_urls: list[str] | None = None
+    file_names: list[str] | None = None
     image_urls: list[str] | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -137,6 +145,7 @@ class NoticePostResponse(BaseModel):
     is_liked: bool
 
     file_urls: list[str] | None = None
+    file_names: list[str] | None = None
     image_urls: list[str] | None = None
 
     model_config = ConfigDict(from_attributes=True)
