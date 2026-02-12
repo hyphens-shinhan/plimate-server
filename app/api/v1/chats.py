@@ -244,19 +244,19 @@ def _build_club_room_response(
     response_model=ChatRoomResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_or_get_message(target_user_id: UUID, user: AuthenticatedUser):
+async def create_or_get_message(user_id: UUID, user: AuthenticatedUser):
     """
     Create a DM room with a user, or return the existing one.
     Requires mutual follow and no blocks.
     """
-    if target_user_id == user.id:
+    if user_id == user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot create a DM with yourself",
         )
 
-    await _check_not_blocked(str(user.id), str(target_user_id))
-    await _check_mutual_follow(str(user.id), str(target_user_id))
+    await _check_not_blocked(str(user.id), str(user_id))
+    await _check_mutual_follow(str(user.id), str(user_id))
 
     try:
         # Check if DM room already exists between these two users
@@ -276,7 +276,7 @@ async def create_or_get_message(target_user_id: UUID, user: AuthenticatedUser):
                     .select("*, chat_room_members!inner(user_id)")
                     .eq("id", room_id)
                     .eq("type", "DM")
-                    .eq("chat_room_members.user_id", str(target_user_id))
+                    .eq("chat_room_members.user_id", str(user_id))
                     .execute()
                 )
 
@@ -308,7 +308,7 @@ async def create_or_get_message(target_user_id: UUID, user: AuthenticatedUser):
         supabase.table("chat_room_members").insert(
             [
                 {"room_id": new_room["id"], "user_id": str(user.id)},
-                {"room_id": new_room["id"], "user_id": str(target_user_id)},
+                {"room_id": new_room["id"], "user_id": str(user_id)},
             ]
         ).execute()
 
